@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-08-28 · 修复后首次实拍验证 + 新增 2 单交付 · v3.2
+
+**已完成**
+- **修复后代码首次真跑生图**（provider=aime），两张新照片全部通过：
+  - 鸟巢（2268×4032）：第 3 轮通过。第 1、2 轮均被**新增的容器质检**拦下（帐篷/灯头/鸟巢带着底座和地面）
+  - 银杏（4032×3024）：第 2 轮通过。第 1 轮被**新增的重复质检**拦下（ginkgo leaf 与 leaf cluster 同族）
+- v3.1.1 三项新质检（duplicate / container / missing）**实拍确认有效**，均真实触发了定向重试
+- `select_objects()` 实拍确认有效：银杏单自动剔除 `tree branch`（与 ginkgo leaf 容器关系）
+- 独立目检（analyze_image 二次复核）：两张均 6 枚齐全、无文字/logo、人物无五官、无粘连、暖白描边到位
+- 导出两单完整厂家文件并上传飞书云空间（10 个文件，含 SVG 内嵌图 / A5 PNG / 三种 PDF）
+- 新建干净的 GitHub 仓库 `memory-sticker-studio`：剔除 1.2GB 历史产物，仅保留 20 个源码与文档文件（952KB），已本地 commit
+- 新增顶层 `README.md`：完整说明产线six大设计要点与每个坑的根因
+
+**关键决策记录**
+- `SIMILAR_FAMILIES` 补入 6 个物品族（leaf/trunk/stone/window/bag/tent）。`leaf` 族缺失导致银杏单漏判，是 v3.1.1 遗留的词库覆盖问题
+- 银杏单最终**保留**单片叶 + 叶簇：该照片 G0 候选池仅 6 个物品，剔除同族后不足 6 枚，兜底回填。属照片本身限制，非代码缺陷
+- GitHub 仓库不含用户原始照片（隐私）与 `run_*/` 产物（体积）
+
+**变更文件**：`memory-sticker-forge/forge.py`（词库）、`memory-sticker-studio/`（新仓库）
+
+**待下一步**：需用户提供 GitHub 仓库地址与 PAT 才能 push；`gpt-image-2` 真实调用仍未验证（本次走 aime provider）
+
+---
+
 ## 2026-08-27 · 真实出图验证 + v2 交付 · v3.2
 
 **已完成**
