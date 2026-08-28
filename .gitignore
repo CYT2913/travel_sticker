@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+run_*/
+forge_out/
+a3_*/
+out*/
+probe_out*/
+pf_*/
+artifacts/
+*.jpeg
+*.jpg
+交付_*/
+!examples/*.png

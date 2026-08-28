@@ -1,0 +1,7 @@
+numpy>=1.24
+opencv-python-headless>=4.8
+scikit-image>=0.21
+scipy>=1.10
+Pillow>=10.0
+# 调用生图/视觉 provider 所需 (火山方舟走 OpenAI 兼容端点, 故两者共用)
+openai>=1.40
