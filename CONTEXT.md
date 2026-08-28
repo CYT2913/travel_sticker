@@ -188,11 +188,7 @@ CJK_FONT_PATH                              # 中文字体
 
 ## 相关产出
 
-- PRD v2.0：https://bytedance.larkoffice.com/docx/AUuVdAxmWoWyWzxXUe2c8RFenih
-- Prompt v1.2 + 实测报告：https://bytedance.larkoffice.com/docx/TkGCd9a1eoEptqxYT6Ac5emwn8b
-- 全流程 SOP：https://bytedance.larkoffice.com/docx/ZTvsd3ujPoSrrYx4Aojc5JYUntc
-- 交付文件 v2（4 单，**当前有效版本**）：https://bytedance.larkoffice.com/drive/folder/PJBYf9ljalAH0ndJoFIcG6AFnv8
-- 交付文件 v1（已废弃，有元素丢失/重复）：https://bytedance.larkoffice.com/drive/folder/AaSrfXGHvlF9e5dvhsQcjcRUnyf
+（PRD、Prompt 实测报告、SOP、交付包等文档存放在项目所有者的私有云盘，未随仓库公开）
 
 ---
 

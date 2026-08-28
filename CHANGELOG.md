@@ -13,7 +13,7 @@
 - v3.1.1 三项新质检（duplicate / container / missing）**实拍确认有效**，均真实触发了定向重试
 - `select_objects()` 实拍确认有效：银杏单自动剔除 `tree branch`（与 ginkgo leaf 容器关系）
 - 独立目检（analyze_image 二次复核）：两张均 6 枚齐全、无文字/logo、人物无五官、无粘连、暖白描边到位
-- 导出两单完整厂家文件并上传飞书云空间（10 个文件，含 SVG 内嵌图 / A5 PNG / 三种 PDF）
+- 导出两单完整厂家文件并上传云盘（10 个文件，含 SVG 内嵌图 / A5 PNG / 三种 PDF）
 - 新建干净的 GitHub 仓库 `memory-sticker-studio`：剔除 1.2GB 历史产物，仅保留 20 个源码与文档文件（952KB），已本地 commit
 - 新增顶层 `README.md`：完整说明产线six大设计要点与每个坑的根因
 
@@ -34,7 +34,7 @@
 - ✅ **首次真实生图验证 v3.1.1 修复效果**，4 张照片全部通过双重质检
 - 新增 `COMPOSITE_REPLACE` 复合体拆解表 + `_decompose()`：整套装备自动换成单件
 - `PREFLIGHT_TASK` 新增规则 5：禁止选 kit / set / rig / stand / tripod / rack 类成套装备
-- 产出 v2 交付包（8 个文件）并上传飞书云空间
+- 产出 v2 交付包（8 个文件）并上传云盘
 
 **四单结果**
 | 单 | 轮次 | 最终 6 枚 |
@@ -135,16 +135,16 @@
 - 故宫检出知乎水印与匾额文字，已剔除
 - 新增 `export_for_digital_cut.py`：输出单枚透明 PNG、`整版_印刷图_A5.pdf`、`整版_图加刀线.pdf`、`整版_纯刀线.pdf`、尺寸清单
 - 新增 `embed_svg.py`：把 SVG 引用的外部位图 base64 内嵌
-- 8 个核心文件（4×SVG + 4×A5 原图 PNG）上传飞书云空间
+- 8 个核心文件（4×SVG + 4×A5 原图 PNG）上传云盘
 
 **关键决策记录**
 - 用户澄清对方是**数码模切店**而非传统印刷厂 → 交付物从"专色刀线 SVG + 厂家须知"改为**双方案**：打印切割一体给 PDF，来图定制给单枚透明 PNG
-- 交付形式从"工作区本地路径"改为**飞书云空间可点击链接**（用户反馈本地路径打不开）
+- 交付形式从"工作区本地路径"改为**云盘可点击链接**（用户反馈本地路径打不开）
 
 **Bug 修复**
 - 🔴 交付级：`export_for_digital_cut.py` 初版用 CairoSVG 直转外链 SVG，生成的"图加刀线 PDF"只有 3KB，实际**只有刀线没有图**。修复：转 PDF 前先内嵌位图，修复后 5.6–6.9MB，渲染目检通过
 - 🔴 交付级：`cutline.svg` 引用 `../FINAL.png`，单独发店家会丢图 → `embed_svg.py` 解决
-- 飞书上传取 folder token 用错字段（`.data.token` 返回 null），正确字段是 `.data.folder_token`
+- 云盘上传取 folder token 用错字段（`.data.token` 返回 null），正确字段是 `.data.folder_token`
 
 **变更文件**：`export_for_digital_cut.py`（新增）、`embed_svg.py`（新增）、`厂家须知.txt`、`交付说明.md`
 
