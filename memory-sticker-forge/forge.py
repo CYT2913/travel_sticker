@@ -134,6 +134,58 @@ JSON 字段：
    看到 cymbal stand（镲架）→ 只选 "cymbal"。
    清单里出现 "kit"、"set"、"rig"、"stand"、"tripod"、"rack" 这类词，几乎都是选错了。"""
 
+# ── G0 字段兜底词库 ────────────────────────────────────────────────────────
+# 为什么要有这两张表：container_pairs / keepsake_objects 是 G0 的「可选字段」，
+# 视觉模型在实拍里经常直接返回 null（run_regress 复现）。一旦为空，
+# 「容器剔除」和「纪念物置顶」两条保护就全部失效 —— 结果就是空盘子单独成一枚贴纸。
+# 这两张表把判断从「模型自觉」下沉到「代码兜底」，模型标了就用模型的，没标就用这里的。
+
+# 单独做成贴纸毫无纪念价值的容器/承载面。它们只在「托着别的东西」时有意义。
+CONTAINER_WORDS = {
+    "plate", "dish", "saucer", "platter", "tray", "bowl", "stand", "holder",
+    "coaster", "napkin", "placemat", "table", "tabletop", "desk", "counter",
+    "surface", "floor", "ground", "wall", "shelf", "rack", "base", "pedestal",
+}
+# 承载对象：食物/蛋糕/甜点等，出现其一就说明同场的容器是多余的
+CONTAINED_WORDS = {
+    "cake", "slice", "dessert", "pastry", "cheesecake", "cupcake", "pie",
+    "food", "dish", "meal", "fruit", "bread", "sandwich", "noodles", "sushi",
+}
+# 承载了「场合记忆」的物件，偏细也必须加粗保留，绝不能被截断或当细部删掉
+KEEPSAKE_WORDS = {
+    "candle", "sparkler", "firework", "balloon", "gift", "present", "ribbon",
+    "bouquet", "flower", "rose", "cake", "ticket", "medal", "trophy", "ring",
+    "lantern", "wish", "card", "letter", "badge", "crown", "banner", "toast",
+    "champagne", "confetti", "lucky", "charm", "souvenir", "postcard", "stamp",
+}
+
+
+def _words(name):
+    return set(_norm(name).split())
+
+
+def infer_container_pairs(objs, given):
+    """模型给了就沿用；没给就按词库推断 (内容物, 容器) 对。"""
+    pairs = [p for p in (given or []) if isinstance(p, (list, tuple)) and len(p) == 2]
+    if pairs:
+        return pairs
+    containers = [o for o in objs if _words(o) & CONTAINER_WORDS]
+    contents = [o for o in objs if (_words(o) & CONTAINED_WORDS)
+                and not (_words(o) & CONTAINER_WORDS)]
+    out = []
+    for c in containers:
+        # 有内容物 → 容器随内容物一起画；没有内容物 → 容器仍然是废件，
+        # 用它自己配对，select_objects 会把它排到最后
+        out.append([contents[0] if contents else c, c])
+    return out
+
+
+def infer_keepsakes(objs, given):
+    if given:
+        return given
+    return [o for o in objs if _words(o) & KEEPSAKE_WORDS]
+
+
 def preflight(photo, workdir):
     from PIL import Image as _I
     _w, _h = _I.open(photo).size
@@ -142,10 +194,20 @@ def preflight(photo, workdir):
     data = grab_json(txt)
     if not data:
         raise SystemExit("❌ 场景解析失败，视觉模型未返回可解析 JSON：\n" + txt[:600])
-    data.setdefault("ip_items", []); data.setdefault("thin_parts", [])
-    data.setdefault("standalone_objects", []); data.setdefault("people_count", 0)
-    data.setdefault("keepsake_objects", [])
-    data.setdefault("container_pairs", []); data.setdefault("similar_pairs", [])
+    # ⚠️ 不能用 setdefault：视觉模型经常把可选字段显式写成 null（实拍 run_regress
+    #    的 keepsake_objects / container_pairs 全是 null），setdefault 只在「键不存在」
+    #    时生效，null 会原样留下，后面 `for x in None` 直接把整套保护逻辑跳过。
+    #    这就是生日单出现「空盘子单独成为一枚贴纸」的真正原因。
+    for _k, _dv in (("ip_items", []), ("thin_parts", []), ("standalone_objects", []),
+                    ("keepsake_objects", []), ("container_pairs", []),
+                    ("similar_pairs", []), ("people_count", 0)):
+        if data.get(_k) is None:
+            data[_k] = _dv
+    # 模型漏标时用内置词库补全，不依赖模型自觉
+    data["container_pairs"] = infer_container_pairs(
+        data["standalone_objects"], data["container_pairs"])
+    data["keepsake_objects"] = infer_keepsakes(
+        data["standalone_objects"], data["keepsake_objects"])
     # 保险：模型仍可能把主体物品误填进 thin_parts，导致该物品被整个省略。
     # 凡是同时出现在 standalone_objects 里的，一律从 thin_parts 剔除。
     _objs = {str(o).strip().lower() for o in data["standalone_objects"]}
@@ -202,8 +264,9 @@ def g0_gate(info, n_elements):
 
 STYLE = """STYLE: Opaque gouache painting combined with hand-cut paper collage. Flat matte pigment, visible dry brush texture, cold-pressed watercolor paper grain. Every shape reads as a separately painted piece of paper cut out by hand and laid down. Each cut-out has a warm off-white (cream, NOT pure white) hand-cut border with a soft short drop shadow. Simplified, poster-like shapes. No photorealism, no gradients, no gloss, no digital smoothness."""
 
-PALETTE_DAY = """PALETTE: Restricted earthy palette as the dominant scheme: olive green, forest green, mustard yellow, sand beige, warm grey, deep umber, terracotta. Overall mood: warm, muted, slightly faded like a risograph print.
-ACCENT COLOR RULE - STRICT: The single accent color (vermilion red) may ONLY appear on ONE OR TWO SMALL OBJECTS. It is FORBIDDEN on any large surface: NOT on tablecloths, NOT on walls, NOT on ceilings, NOT on backgrounds, NOT on large panels, NOT on furniture. Large surfaces use olive green, mustard, beige or warm grey instead. If in doubt, use less accent color."""
+PALETTE_DAY = """PALETTE: Restricted earthy palette. The DOMINANT, most-used colours are the warm ones: terracotta, burnt sienna, mustard yellow, warm ochre, sand beige and deep umber. Olive green, forest green and warm grey are SUPPORTING colours only - they must never become the overall cast of the artwork. This is a WARM picture, not a green or grey one; if the result reads as sage, olive or khaki overall, it is wrong.
+ACCENT COLOR: vermilion red is the accent. It MUST actually appear - at least one small object carries it (a candle, a flame, a small prop). But it stays SMALL: never on tablecloths, walls, ceilings, backgrounds, large panels or furniture. Large surfaces take terracotta, mustard, beige or olive instead.
+Overall mood: warm, muted, slightly faded like a risograph print - warm-toned, not desaturated to grey."""
 
 PALETTE_NIGHT = """NIGHT PALETTE: deep indigo, ink navy, charcoal plum, slate blue-grey, with warm amber and pale gold as the light sources. Stage or street lighting is reinterpreted as flat amber and gold paper shapes, NOT as neon glow, NOT as purple-magenta wash, NOT as light bleed or lens flare. No saturated cyan, no hot pink, no RGB screen colors. Overall mood: quiet, warm-in-the-dark, like a hand-printed gig poster.
 ACCENT COLOR RULE - STRICT: warm amber/gold is the only accent and may cover at most 20% of the artwork, concentrated in small light shapes. Everything else stays in the dark blue-plum range."""
@@ -265,7 +328,8 @@ DRAW EVERY LISTED OBJECT - NO SUBSTITUTION, NO OMISSION:
 Each object in that list must appear as its own sticker. Do not silently drop one, do not replace one with a different object you find more interesting, and do not draw the same object twice. If an object seems small or delicate, draw it BIGGER and CHUNKIER - never leave it out.
 
 NO DUPLICATES, NO CONTAINERS - the elements must be visibly distinct from each other:
-- Draw each object COMPLETELY ALONE, isolated from whatever it was resting on in the photo. If an object normally sits on a plate, tray, table, stand, holder or surface, draw ONLY the object itself and leave that plate/tray/stand OUT of the sticker. A cake sticker contains cake and nothing else - no plate under it.
+- Cut each object out of its surroundings. NEVER include the table, tabletop, floor, ground, stage, shelf or any large surface it was resting on - the sticker must not sit on a slab of scenery.
+- A small vessel that genuinely belongs to the object MAY stay with it, because it makes the sticker read better: a slice of cake may keep its own small plate, a drink may keep its glass, a candle may keep its holder. But that vessel must then NOT appear again as a sticker of its own.
 - No two elements may look alike. Never draw two instruments of the same family, two pieces of the same tableware, or two variations of the same object. If two listed objects would end up with a similar flat silhouette, make them clearly different in shape, size and colour.
 The chosen objects must SPAN DIFFERENT CATEGORIES - do not make them all the same kind of thing. Include equipment, furniture, lighting, tableware or props as available, not only one category.
 Each object element must be instantly recognizable on its own when peeled off and stuck into a notebook."""
@@ -284,7 +348,11 @@ LAYOUT = """LAYOUT: A sticker sheet on a plain solid pure white background. Arra
 
 NEGATIVE = """DO NOT: black outlines, black keylines, photorealism, 3D render, gloss, plastic surface, airbrush, neon glow, lens flare, bokeh, gradient mesh, facial features, readable text, watermarks, thin hairline details, thin poles, thin sticks, thin strings, pure white cut-out borders, elements touching each other, elements close to the sheet edge, crowded layout, full-bleed elements, scenery inside object stickers, people inside object stickers."""
 
-HEAD = """Reinterpret this photograph as a set of die-cut stickers in the following illustration style. Keep the recognizable subjects of the original photo, but do not copy its lighting or its colors."""
+HEAD = """Reinterpret this photograph as a set of die-cut stickers in the following illustration style. Keep the recognizable subjects of the original photo. Do NOT copy the photo's lighting, and do not copy its exact colours - instead MAP each real colour onto its nearest colour in the palette below (a red candle stays red, a wooden table becomes terracotta or umber, a green wall becomes olive). Never wash the whole picture into one single hue."""
+
+# 长 prompt 里排在最前的风格段容易被后面成堆的约束条款稀释，
+# 收尾再压一次风格（近因效应）—— 实拍中「质感变软、颜色发灰」就是被稀释掉的。
+STYLE_REMINDER = """FINAL STYLE CHECK - the artwork must look like: thick opaque gouache paint on textured paper, hand-torn and hand-cut, assembled as a collage. Crisp flat colour areas with visible paper grain and a warm cream torn edge on every piece. Rich saturated earthy pigment - NOT pale, NOT washed out, NOT airbrushed, NOT soft-blended watercolour, NOT a uniform sage-green cast."""
 
 GRID = {4: (2, 2), 5: (2, 3), 6: (2, 3), 7: (2, 4), 8: (2, 4), 9: (3, 3)}
 
@@ -390,14 +458,41 @@ def select_objects(info, n_obj):
         if k and k not in seen:
             seen.add(k); objs.append(o2)
 
-    # ① 容器剔除：A 盛放在 B 上时，只保留更有纪念意义的内容物 A，丢掉容器 B
+    # ① 容器剔除：A 盛放在 B 上时，两者只留一个。
+    #
+    # ⚠️ 这里不能无脑「丢外层」。实拍踩过的坑：G0 把生日单标成
+    #        [["birthday cake","plate"], ["candle","birthday cake"], ["sparkler","glass cup"]]
+    #    第二对的语义是「蜡烛插在蛋糕上」，无脑丢外层就把【蛋糕本身】删了 ——
+    #    整单最重要的纪念物没了，比留一个空盘子还糟。
+    #    所以要比「价值」：容器词最低，纪念物最高；两个都是纪念物时丢里层
+    #    （蜡烛本来就画在蛋糕上，蛋糕带蜡烛才是那枚经典图案）。
+    _keepset = {_norm(_decompose(x)[0]) for x in info.get("keepsake_objects") or []}
+
+    def _value(name):
+        if _words(name) & CONTAINER_WORDS:
+            return 0
+        return 2 if _norm(name) in _keepset else 1
+
     contained = set()
     for pair in info.get("container_pairs") or []:
         if isinstance(pair, (list, tuple)) and len(pair) == 2:
             inner, outer = _norm(pair[0]), _norm(pair[1])
-            if inner in seen and outer in seen:
+            if inner not in seen or outer not in seen:
+                continue
+            if inner == outer:
                 contained.add(outer)
-                dropped.append("%s（已随 %s 一起画，单独出会重复）" % (pair[1], pair[0]))
+                dropped.append("%s（空容器，单独做成贴纸没有纪念价值）" % pair[1])
+                continue
+            vi, vo = _value(inner), _value(outer)
+            if vi > vo:
+                loser, winner = outer, inner
+            elif vo > vi:
+                loser, winner = inner, outer
+            else:
+                # 势均力敌：丢里层，因为里层本来就画在外层身上
+                loser, winner = inner, outer
+            contained.add(loser)
+            dropped.append("%s（已随 %s 一起画，单独出会重复）" % (loser, winner))
 
     # ② 同族折叠：G0 标注的 similar_pairs + 内置词库双保险
     explicit = set()
@@ -490,6 +585,39 @@ def build_prompt(info, n, patches=None, figure_style="collage", exclude=None):
     if patches:
         parts.append("CORRECTIONS - the previous attempt failed quality control. Fix these specific problems:\n" +
                      "\n".join("- " + p for p in patches))
+    parts.append(STYLE_REMINDER)
+    return "\n\n".join(parts)
+
+
+# ── 主视觉场景图（卡纸打印图的左半部分） ──────────────────────────────────
+# 和贴纸版共用 STYLE / PALETTE / FIGURE / COMPLIANCE，只换输出规格段，
+# 这样同一单里「场景图」和「贴纸」出自同一套色板和笔触，拼到一张卡纸上才不出戏。
+SCENE_OUTPUT = """OUTPUT - ONE SINGLE COMPLETE SCENE:
+Produce ONE single complete scene composition that re-tells this photograph as one picture - NOT a sticker sheet, NOT separate cut-out elements, NOT a grid.
+Keep the setting, the layout and the atmosphere of the original photo so the customer recognises the moment at a glance: the same subject in the same place, doing the same thing.
+Fill the whole frame edge to edge with the scene. Balanced composition with one clear focal point.
+Build the background out of large flat cut-paper shapes as well - walls, seating, windows, sky and ground are each their own piece of painted paper.
+No white margin, no frame, no border, no caption, no numbering, no separate floating objects outside the scene."""
+
+SCENE_NEGATIVE = """DO NOT: a sticker sheet, a grid of separate objects, isolated cut-outs on a white background, black outlines, black keylines, photorealism, 3D render, gloss, airbrush, neon glow, lens flare, bokeh, gradient mesh, facial features, readable text, watermarks, brand logos."""
+
+
+def build_scene_prompt(info, figure_style="collage"):
+    """主视觉场景图 prompt（模块 O1）。"""
+    night = info.get("lighting") == "night"
+    ip = info.get("ip_items") or ["any brand logo or wordmark"]
+    parts = ["Reinterpret this photograph as one single illustrated scene in the following style. "
+             "Keep the recognizable subjects, the setting and the composition of the original photo. "
+             "Do NOT copy the photo's lighting, and do not copy its exact colours - MAP each real "
+             "colour onto its nearest colour in the palette below. Never wash the whole picture into one single hue.",
+             STYLE, PALETTE_NIGHT if night else PALETTE_DAY]
+    if (info.get("people_count") or 0) > 0:
+        cols_fig = FIGURE_COLORS_NIGHT if night else FIGURE_COLORS_DAY
+        parts.append((FIGURE_SILHOUETTE if figure_style == "silhouette"
+                      else FIGURE_COLLAGE) % cols_fig)
+    else:
+        parts.append(NO_FIGURE)
+    parts += [COMPLIANCE % ", ".join(ip), SCENE_OUTPUT, SCENE_NEGATIVE, STYLE_REMINDER]
     return "\n\n".join(parts)
 
 # ── 步骤 3：生成 ───────────────────────────────────────────────────────────
@@ -635,10 +763,23 @@ def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expe
         fails.append("出现重复元素：%s。同一张贴纸上不能有两枚画同一物品或同族物品（两把吉他、两个杯子）。"
                      "必须把其中一枚换成清单里【完全不同类别】的物品，两枚轮廓要一眼就能区分"
                      % "、".join("%s 与 %s" % (p[0], p[1]) for p in dup))
-    if d.get("objects_with_container"):
-        fails.append("以下贴纸把承载它的盘子/托盘/桌面/支架也一起画进去了：%s。"
-                     "纯物品贴纸只能有物品本体，必须把下面的盘子、托盘、底座整个去掉，物品单独悬空呈现"
-                     % ", ".join(d["objects_with_container"]))
+    # ⚠️ 容器判定必须区分两种情况，早期版本一刀切，把好看的图判废了：
+    #   (a) 蛋糕连着自己那只小盘子 —— 参考稿里就是这样，比光秃秃一块蛋糕好看得多，放行；
+    #   (b) 蛋糕带盘子，同时另一枚贴纸又是那只盘子 —— 这才是顾客投诉的「重复的盘子」，判废；
+    #   (c) 物品下面拖着桌面/地面/舞台这类大面积承载物 —— 贴纸剪不出来，判废。
+    _BIG_SURFACES = {"table", "tabletop", "desk", "counter", "floor", "ground",
+                     "stage", "surface", "shelf", "wall"}
+    with_c = [c for c in (d.get("objects_with_container") or []) if str(c).strip()]
+    if with_c:
+        big = [c for c in with_c if _words(c) & _BIG_SURFACES]
+        if big:
+            fails.append("以下贴纸把桌面/地面/舞台这类大面积承载物也画进去了：%s。"
+                         "模切剪不出这种底座，必须让物品单独悬空呈现" % ", ".join(big))
+        # 「容器又被单独画了一枚」这种真重复，已经在 select_objects 阶段就被
+        # 堵死了（盘子根本不会进物品清单），这里不必再判一次。
+        # 早期版本在这里补了一刀，结果视觉模型每轮都把「蛋糕连着自己的小盘子」
+        # 报成容器问题，三轮全废 —— 判废的恰恰是参考稿里最好看的那版。
+        # 真正的重复交给 duplicate_pairs 兜，这里只管大面积承载物。
     miss = [m for m in (d.get("missing_objects") or []) if str(m).strip()]
     if miss:
         fails.append("以下指定物品没有画出来：%s。这些是顾客照片里的纪念物，必须补画成独立贴纸；"

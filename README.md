@@ -85,6 +85,29 @@ G0 就把品牌 logo、赞助商字样、大屏画面、海报图案、动漫形
 
 ---
 
+## 一单要印的是两件东西
+
+这一点决定了整个仓库的结构，先说清楚：
+
+| 产物 | 印在什么上 | 用途 | 谁生成 |
+|---|---|---|---|
+| **A5 贴纸版** | 不干胶 + 模切 | 撕下来贴手账，是耗材 | `forge.py` |
+| **卡纸打印图** | 厚卡纸整张打印 | 收藏 / 摆台 / 送人，是留念品 | `forge_scene.py` + `make_memory_card.py` |
+
+卡纸打印图长这样：左边一整幅主视觉场景，右边几枚贴纸样，底下一行英文小标题。
+
+**为什么卡纸图不让模型一次画完整张？** 早期版本试过，三个问题都是硬伤：
+
+1. 标题是模型「画」出来的字母，几乎必然拼错或糊掉，而且改不了；
+2. 卡上的贴纸和真正模切的那六枚不是同一批图案 —— 客户会发现「卡上的蛋糕和我贴纸里的蛋糕不一样」；
+3. 出血、页边距、成品尺寸全靠运气，印厂那关过不了。
+
+现在的做法：**卡上的贴纸就是从 A5 成品图里抠出来的那六枚本体**，标题用真字体排，
+尺寸/出血/dpi 由代码算死。模型只负责画左边那幅场景，而且场景和贴纸共用同一套色板段，
+拼到一张卡上不会一半暖棕一半灰绿。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -99,6 +122,17 @@ python3 forge.py /path/to/photo.jpg --preflight-only
 
 # 凑满 4 单拼 A3（一张 A3 = 4 张 A5，印厂更便宜）
 python3 ../print-ready-doctor/impose_a3.py 单1/FINAL.png 单2/FINAL.png 单3/FINAL.png 单4/FINAL.png --outdir a3_out/
+
+# 卡纸打印图（两步：先出场景，再排版）
+python3 memory-sticker-forge/forge_scene.py 照片.jpg \
+        --preflight run/p1/preflight.json --outdir run/p1
+python3 print-ready-doctor/make_memory_card.py \
+        --scene run/p1/scene.png --stickers run/p1/FINAL.png \
+        --caption "CANDLELIGHT · WISH · SPARKLER" --outdir 交付/01
+
+# 不确定哪几枚上卡？先出带编号的预览，再用 --drop 排除人物那枚
+python3 print-ready-doctor/make_memory_card.py --scene ... --stickers ... \
+        --outdir 交付/01 --preview-only
 
 # 导出数码模切店能直接收的文件
 python3 ../print-ready-doctor/export_for_digital_cut.py out/order1/FINAL.png --outdir 交付/

@@ -49,6 +49,50 @@ def test_container_dropped():
     assert any("plate" in d for d in dropped), "剔除理由应被记录"
 
 
+def test_keepsake_survives_container_rule():
+    """
+    实拍回归（v3.3）：G0 把生日单标成
+        [["birthday cake","plate"], ["candle","birthday cake"], ["sparkler","glass cup"]]
+    第二对的语义是「蜡烛插在蛋糕上」。旧逻辑无脑丢外层 → 把蛋糕本身删了，
+    整单最重要的纪念物消失。修复后必须保住蛋糕。
+    """
+    info = {
+        "standalone_objects": ["birthday cake", "sparkler", "candle", "glass cup",
+                               "plate", "spoon", "rose petal", "pendant lamp"],
+        "keepsake_objects": ["birthday cake", "sparkler", "candle"],
+        "container_pairs": [["birthday cake", "plate"],
+                            ["candle", "birthday cake"],
+                            ["sparkler", "glass cup"]],
+        "similar_pairs": [],
+    }
+    picked, dropped = forge.select_objects(info, 5)
+    assert "birthday cake" in picked, "蛋糕是纪念物，不能被当容器丢掉：%s" % picked
+    assert "plate" not in picked, "空盘子仍应剔除：%s" % picked
+    assert "sparkler" in picked, "仙女棒应保留：%s" % picked
+    assert len(picked) == 5
+
+
+def test_empty_container_dropped_without_model_hint():
+    """模型没标 container_pairs 时，词库要能自己认出「空盘子」这种废件。"""
+    objs = ["dessert plate", "sparkler", "candle", "glass cup", "lamp", "chair"]
+    pairs = forge.infer_container_pairs(objs, None)
+    info = {"standalone_objects": objs, "keepsake_objects": forge.infer_keepsakes(objs, None),
+            "container_pairs": pairs, "similar_pairs": []}
+    picked, dropped = forge.select_objects(info, 5)
+    assert "dessert plate" not in picked, "无内容物的盘子也应剔除：%s" % picked
+
+
+def test_null_fields_are_coerced():
+    """
+    实拍回归（v3.3）：视觉模型会把可选字段显式写成 null。
+    原来用 setdefault，null 会原样留下，容器/纪念物保护全部静默失效。
+    """
+    objs = ["cake slice", "dessert plate", "sparkler", "candle", "glass", "lamp"]
+    assert forge.infer_keepsakes(objs, None), "keepsake 为 null 时应能用词库补出来"
+    pairs = forge.infer_container_pairs(objs, None)
+    assert any("plate" in str(p) for p in pairs), "container_pairs 为 null 时应能推断出盘子"
+
+
 # ── 3. 同族不得重复 ──────────────────────────────────────────────────────
 def test_similar_family_folded():
     """电吉他和贝斯只能留一把。"""
