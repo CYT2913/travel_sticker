@@ -57,7 +57,7 @@ memory-sticker-forge/          # AI 出图产线
   providers.py                 # ★ AI 能力适配层（迁移隔离点）
                                #   generate_image(photo, prompt, out_png)
                                #   analyze_images(paths, task)
-                               #   支持 aime / volcengine / openai / gemini
+                               #   支持 openai / volcengine / cmd（接任意外部命令）
   tools/selftest_provider.py   # provider 三级自检（免费干检查→视觉→生图）
   forge_a3.py                  # 探索性：一张照片出 24 枚（非主线）
   probe_capacity.py            # 探索性：探测一张照片能出多少图案（非主线）
@@ -71,11 +71,11 @@ print-ready-doctor/            # 印前工具链
   requirements.txt
 ```
 
-**关键：`forge.py` 不直接调用任何 Aime 内部能力，全部走 `providers.py`。** 迁移到 Codex/本地只需实现两个 provider 函数。
+**关键：`forge.py` 不直接调用任何具体平台的能力，全部走 `providers.py`。** 换后端只需实现两个 provider 函数。
 
 环境变量：
 ```bash
-FORGE_PROVIDER=openai|volcengine|aime      # 生图+视觉
+FORGE_PROVIDER=openai|volcengine|cmd      # 生图+视觉
 FORGE_IMAGE_PROVIDER / FORGE_VISION_PROVIDER  # 可分开配
 OPENAI_IMAGE_MODEL=gpt-image-2             # 默认
 OPENAI_IMAGE_SIZE=a5-300                   # 1760x2480；a5-400=2336x3312

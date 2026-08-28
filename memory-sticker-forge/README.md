@@ -183,8 +183,6 @@ run_001/
 
 ## 依赖
 
-- `inner_skills/analyze_media/analyze_image.py`（照片解析 + 目视质检）
-- `inner_skills/image-generate/script/image_edit.py`（4k 生成）
 - `print-ready-doctor/print_ready_doctor.py`（量化体检 + 刀线导出）
 - `print-ready-doctor/relayout.py`（程序化重排，v1.4 起为默认步骤）
 - `print-ready-doctor/impose_a3.py`（凑单后的 A3 四宫格拼版）

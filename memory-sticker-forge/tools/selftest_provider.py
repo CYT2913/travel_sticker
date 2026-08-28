@@ -41,7 +41,7 @@ RATIO_TOL = 0.03
 REQUIRED_ENV = {
     "volcengine": ["ARK_API_KEY"],
     "openai": ["OPENAI_API_KEY"],
-    "aime": [],
+    "cmd": ["FORGE_GEN_CMD", "FORGE_VISION_CMD"],
     "gemini": ["GEMINI_API_KEY"],
 }
 
@@ -82,7 +82,7 @@ def check_config():
         desc = providers.describe()
     except Exception as e:
         bad("provider 配置有问题：%s" % e)
-        print("     FORGE_PROVIDER 可选：aime / volcengine / openai")
+        print("     FORGE_PROVIDER 可选：openai / volcengine / cmd")
         sys.exit(1)
 
     print("     当前生效： " + c(desc, "b"))
@@ -93,8 +93,8 @@ def check_config():
     ok("解析正常（生图=%s，视觉=%s）" % (gen, vis))
 
     step("2. SDK 依赖")
-    if gen == "aime" and vis == "aime":
-        ok("aime provider 走内部脚本，不需要 openai SDK")
+    if gen == "cmd" and vis == "cmd":
+        ok("cmd provider 走外部命令，不需要 openai SDK")
     else:
         try:
             import openai  # noqa: F401

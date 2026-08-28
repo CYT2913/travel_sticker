@@ -5,10 +5,7 @@ providers.py —— 外部 AI 能力适配层
 
 【这个文件存在的唯一目的】
 forge.py 的产线逻辑（照片体检、prompt 组装、配比规划、质检、重试）是纯业务代码，
-和用哪家模型无关。但它原本直接写死调用了两个 Aime 内部服务：
-    · inner_skills/image-generate     图生图
-    · inner_skills/analyze_media      视觉理解
-这两个在 Aime 之外（例如 codex / 本地 / 服务器）都不存在。
+和用哪家模型无关。换任何一家生图 / 视觉服务，都不需要改动 forge.py。
 
 把它们收敛到这一个文件后，迁移工作量 = 实现下面两个函数，其余代码一行不用改。
 
@@ -28,7 +25,7 @@ forge.py 的产线逻辑（照片体检、prompt 组装、配比规划、质检�
 ────────────────────────────────────────────────────────────────────────
 切换方式
 ────────────────────────────────────────────────────────────────────────
-    export FORGE_PROVIDER=aime        # 默认，Aime 环境内
+    export FORGE_PROVIDER=openai      # 默认
     export FORGE_PROVIDER=volcengine  # 推荐的对外方案（Seedream 4.0 支持 4K）
     export FORGE_PROVIDER=openai      # ✅ gpt-image-2 起可用，见文末
     export FORGE_PROVIDER=gemini      # ⚠️ 分辨率不达标，见文末
@@ -38,7 +35,6 @@ forge.py 的产线逻辑（照片体检、prompt 组装、配比规划、质检�
 ────────────────────────────────────────────────────────────────────────
 A5 竖版成品需要 2331×3307px @400dpi（300dpi 底线是 1748×2480）。
 
-    Aime 内部 image-generate --resolution 4k → 2352×3520  ✅
     火山 Seedream 4.0（支持 4K 输出）          → 可达标    ✅
     OpenAI gpt-image-1 最大 1536×1024          → ❌ 差 1.5 倍以上
     OpenAI gpt-image-2 最长边 3840px            → ✅ 达标（本项目默认 1760×2480）
@@ -63,10 +59,11 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 
-PROVIDER = os.environ.get("FORGE_PROVIDER", "aime").strip().lower()
+PROVIDER = os.environ.get("FORGE_PROVIDER", "openai").strip().lower()
 
 # A5 竖版 @400dpi。generate_image 的输出短边不应低于 300dpi 对应的 1748。
 TARGET_W_PX = 2331
@@ -79,49 +76,47 @@ class ProviderError(RuntimeError):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Provider: aime（Aime 环境内，已验证可用）
+# Provider: cmd —— 接任意外部命令行工具
+#
+#   如果你已经有一套自己的生图 / 视觉命令（本地模型、私有网关、任意 CLI），
+#   不用写 Python，直接用环境变量把命令模板告诉这里即可。
+#
+#   环境变量：
+#       FORGE_GEN_CMD     生图命令模板，支持占位符 {photo} {prompt} {out}
+#                         要求执行后在 {out} 位置产出 PNG
+#       FORGE_VISION_CMD  视觉命令模板，支持占位符 {paths} {task}
+#                         要求把分析结果打到 stdout；{paths} 为空格分隔的多个路径
+#
+#   例：
+#       export FORGE_PROVIDER=cmd
+#       export FORGE_GEN_CMD='mytool img2img --src {photo} --prompt {prompt} --out {out}'
+#       export FORGE_VISION_CMD='mytool vision --images {paths} --ask {task}'
 # ══════════════════════════════════════════════════════════════════════════
 
-def _aime_root():
-    here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.dirname(here)
-
-
-def _aime_generate(photo_path, prompt, out_png):
-    root = _aime_root()
-    imgedit_dir = os.path.join(root, "inner_skills/image-generate")
-    art = os.path.join(root, "artifacts")
-    before = set(os.listdir(art)) if os.path.isdir(art) else set()
-
-    cmd = [sys.executable, "script/image_edit.py",
-           "--imageurls", os.path.abspath(photo_path),
-           "--prompt", prompt,
-           "--aspectratio", "2:3",
-           "--resolution", "4k"]
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=imgedit_dir)
-    out = r.stdout + r.stderr
-
-    hits = re.findall(r"(/\S+?\.png)", out)
-    if not hits:
-        new = [f for f in os.listdir(art) if f not in before] if os.path.isdir(art) else []
-        if not new:
-            raise ProviderError("图像生成失败：\n" + out[-800:])
-        hits = [os.path.join(art, sorted(new)[-1])]
-
-    shutil.copy(hits[-1], out_png)
+def _cmd_generate(photo_path, prompt, out_png):
+    tpl = os.environ.get("FORGE_GEN_CMD")
+    if not tpl:
+        raise ProviderError("FORGE_PROVIDER=cmd 需要设置 FORGE_GEN_CMD")
+    cmd = tpl.format(photo=shlex.quote(os.path.abspath(photo_path)),
+                     prompt=shlex.quote(prompt),
+                     out=shlex.quote(os.path.abspath(out_png)))
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if not os.path.exists(out_png):
+        raise ProviderError("外部生图命令未产出文件：\n%s\n%s"
+                            % (cmd, (r.stdout + r.stderr)[-800:]))
     return out_png
 
 
-def _aime_analyze(paths, task):
-    root = _aime_root()
-    vision = os.path.join(root, "inner_skills/analyze_media/analyze_image.py")
-    payload = json.dumps({"paths": [os.path.abspath(p) for p in paths], "task": task})
-    r = subprocess.run([sys.executable, vision, payload],
-                       capture_output=True, text=True, cwd=root)
-    out = r.stdout + r.stderr
-    m = re.search(r"result='(.*)'\)\s*$", out, re.S)
-    txt = m.group(1) if m else out
-    return txt.replace("\\n", "\n").replace("\\'", "'")
+def _cmd_analyze(paths, task):
+    tpl = os.environ.get("FORGE_VISION_CMD")
+    if not tpl:
+        raise ProviderError("FORGE_PROVIDER=cmd 需要设置 FORGE_VISION_CMD")
+    cmd = tpl.format(paths=" ".join(shlex.quote(os.path.abspath(p)) for p in paths),
+                     task=shlex.quote(task))
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise ProviderError("外部视觉命令失败：\n%s" % (r.stdout + r.stderr)[-800:])
+    return r.stdout.strip() or r.stderr.strip()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -336,9 +331,9 @@ def _gemini_not_ready(*_a, **_k):
 # 分发
 # ══════════════════════════════════════════════════════════════════════════
 
-_GEN = {"aime": _aime_generate, "volcengine": _volc_generate,
+_GEN = {"cmd": _cmd_generate, "volcengine": _volc_generate,
         "openai": _openai_generate, "gemini": _gemini_not_ready}
-_ANA = {"aime": _aime_analyze, "volcengine": _volc_analyze,
+_ANA = {"cmd": _cmd_analyze, "volcengine": _volc_analyze,
         "openai": _openai_analyze, "gemini": _gemini_not_ready}
 
 
