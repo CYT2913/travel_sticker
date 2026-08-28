@@ -370,7 +370,7 @@ python3 make_memory_card.py ... --drop 6
 | `--dpi` | 400 | |
 | `--bleed` | 3 | 出血 mm，0 为不出血 |
 | `--only / --drop` | 空 | 按编号选/排除元素 |
-| `--max-elements` | 5 | 右栏最多放几枚 |
+| `--max-elements` | 6 | 右栏最多放几枚（产品规格 6 枚 = 5 物品 + 1 人物，2 列 × 3 行） |
 | `--seed` | 3 | 换一个数字就换一种撕口和摆放 |
 | `CARD_FONT_PATH` | 自动 | 环境变量，指定标题字体 |
 

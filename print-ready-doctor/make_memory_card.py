@@ -239,7 +239,7 @@ def draw_caption(canvas, text, cx_px, y_px, size_px, tracking):
 # ── 主流程 ─────────────────────────────────────────────────────────────────
 
 def build_card(scene_path, sheet_path, caption, w_mm, h_mm, dpi,
-               only=None, drop=None, max_elems=5, seed=3):
+               only=None, drop=None, max_elems=6, seed=3):
     ppmm = dpi / 25.4
     W, H = int(round(w_mm * ppmm)), int(round(h_mm * ppmm))
     canvas = np.zeros((H, W, 3), np.float32)
@@ -377,7 +377,8 @@ def main():
     ap.add_argument("--bleed", type=float, default=3.0, help="出血 mm，0 为不出血版")
     ap.add_argument("--only", default="", help="只用这几枚，如 1,2,3,5")
     ap.add_argument("--drop", default="", help="排除这几枚，如 6（人物那枚通常不上卡）")
-    ap.add_argument("--max-elements", type=int, default=5)
+    ap.add_argument("--max-elements", type=int, default=6,
+                    help="右栏最多放几枚，默认 6（产品规格：5 物品 + 1 人物）")
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--preview-only", action="store_true", help="只出编号预览图")
     args = ap.parse_args()

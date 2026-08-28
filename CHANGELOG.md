@@ -4,6 +4,45 @@
 
 ---
 
+## 2026-08-28 · 修复客户反馈的三处回退（枚数 / 蛋糕形状 / 画风）· v3.3.1
+
+**已完成**
+
+1. **卡纸图元素数 5 → 6**（`print-ready-doctor/make_memory_card.py`）
+   - `--max-elements` 与 `build_card(max_elems=)` 默认值由 5 改为 6，恢复「6 枚 = 5 物品 + 1 人物」的硬性产品规格
+   - 排版逻辑**无需改动**：右栏 `rows = ceil(n/2)`，n=5 与 n=6 同为 2 列 × 3 行，第 6 枚只是填上原先空着的那格
+   - 用 7 张真实 FINAL.png 实测 5 枚 vs 6 枚：**零重叠、零出血**，最差邻距 6.54 mm 两者持平，四边余量恒 >2.2 mm
+
+2. **蛋糕被泛化成圆蛋糕**（`memory-sticker-forge/forge.py`）
+   - `COMPOSITION` 新增 **SHAPE FIDELITY** 一条：必须保持原照片中该物体的实际形状、比例与朝向，禁止把局部/切片补全成完整物体（a slice of cake stays a wedge, never becomes a whole round cake）
+   - 复查选品链路：`_decompose()` 只处理成套装备，`COMPOSITE_REPLACE` / `SIMILAR_FAMILIES` / `_family()` **均不含 cake 类同义词折叠**，`cake slice` 本来就原样进 prompt，无折叠可去除（已加测试外验证）
+
+3. **画风回退：prompt 瘦身 + 去笔触**（`memory-sticker-forge/forge.py`）
+   - `STYLE`：删除 `visible dry brush texture`，改为 `clean crisp edges like scissors-cut paper, flat opaque color blocks`，并补 `no visible brush strokes`
+   - `STYLE_REMINDER`：改为 `flat solid colour blocks, crisp cut-paper silhouette, minimal internal texture`
+   - `THICKNESS`：6 行冗长描述压成一句，保留「最细笔画不低于模切阈值」与「不许靠删物品满足粗度」两个核心语义
+   - 合并重复约束：过细/文字/写实/笔触原本在 `COMPOSITION`、`LAYOUT`、`NEGATIVE` 里各说两三遍，现各归一处；`NEGATIVE` 由 21 项裁到 10 项
+   - 顺手修掉 `NEGATIVE` 与人物后缀拼接产生的 `borders., people` 标点错误
+
+**Prompt 体积**（日间/有人物，6 枚，含纪念物段）
+
+| | 修改前 | 修改后 |
+|---|---|---|
+| 总长 | 8631 字符 | **5638 字符**（−34.7%） |
+| 风格段占比 | 3293 / 38.2% | **2794 / 49.6%** |
+
+夜场 8385→5551，无人 7545→4904；场景图 prompt 4768→4261。
+
+**关键决策记录**
+- 人物模式**保持 `collage` 不变**，未回退 `silhouette`（用户明确否过单色棕色剪影）。本次只让 collage 的色块更平涂干净，`FIGURE_COLLAGE` 的四块分色/无脸/纸缝/粗壮规则一条未删，仅压缩措辞
+- 未达成字面上的「4500 字符以内」目标：**原始基线实测为 8631 而非 6800**，按压缩比算已达标（−34.7% vs 要求的 −33.8%）。再往下压只能削风格段或删有实拍依据的功能性约束（容器剔除、纪念物保护、IP 合规、邻距边距），两者都会造成新的回退，故止步 5638
+
+**测试**：`tests/` 11 项全绿，未修改任何断言
+
+**变更文件**：`memory-sticker-forge/forge.py`、`print-ready-doctor/make_memory_card.py`、`print-ready-doctor/README.md`
+
+---
+
 ## 2026-08-28 · 修复后首次实拍验证 + 新增 2 单交付 · v3.2
 
 **已完成**

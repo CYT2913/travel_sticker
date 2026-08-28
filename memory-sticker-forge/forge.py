@@ -262,11 +262,11 @@ def g0_gate(info, n_elements):
 
 # ── 步骤 2：组装 prompt ────────────────────────────────────────────────────
 
-STYLE = """STYLE: Opaque gouache painting combined with hand-cut paper collage. Flat matte pigment, visible dry brush texture, cold-pressed watercolor paper grain. Every shape reads as a separately painted piece of paper cut out by hand and laid down. Each cut-out has a warm off-white (cream, NOT pure white) hand-cut border with a soft short drop shadow. Simplified, poster-like shapes. No photorealism, no gradients, no gloss, no digital smoothness."""
+STYLE = """STYLE: Opaque gouache painting assembled as a hand-cut paper collage. Flat matte pigment in clean crisp edges like scissors-cut paper, flat opaque color blocks, each block one even tone carrying only a faint cold-pressed paper grain. Every shape reads as a separately painted piece of paper cut out by hand and laid down. Each cut-out has a warm off-white (cream, NOT pure white) hand-cut border with a soft short drop shadow. Simplified, poster-like shapes. No photorealism, no gradients, no gloss, no visible brush strokes, no digital smoothness."""
 
-PALETTE_DAY = """PALETTE: Restricted earthy palette. The DOMINANT, most-used colours are the warm ones: terracotta, burnt sienna, mustard yellow, warm ochre, sand beige and deep umber. Olive green, forest green and warm grey are SUPPORTING colours only - they must never become the overall cast of the artwork. This is a WARM picture, not a green or grey one; if the result reads as sage, olive or khaki overall, it is wrong.
-ACCENT COLOR: vermilion red is the accent. It MUST actually appear - at least one small object carries it (a candle, a flame, a small prop). But it stays SMALL: never on tablecloths, walls, ceilings, backgrounds, large panels or furniture. Large surfaces take terracotta, mustard, beige or olive instead.
-Overall mood: warm, muted, slightly faded like a risograph print - warm-toned, not desaturated to grey."""
+PALETTE_DAY = """PALETTE: restricted earthy palette. The DOMINANT colours are the warm ones: terracotta, burnt sienna, mustard yellow, warm ochre, sand beige and deep umber. Olive green, forest green and warm grey are SUPPORTING only and must never become the overall cast - if the result reads sage, olive, khaki or grey overall, it is wrong.
+ACCENT COLOR: vermilion red must actually appear on at least one small object (a candle, a flame, a small prop), but stays SMALL - never on tablecloths, walls, ceilings, backgrounds, large panels or furniture, which take terracotta, mustard, beige or olive instead.
+Overall mood: warm, muted, slightly faded like a risograph print."""
 
 PALETTE_NIGHT = """NIGHT PALETTE: deep indigo, ink navy, charcoal plum, slate blue-grey, with warm amber and pale gold as the light sources. Stage or street lighting is reinterpreted as flat amber and gold paper shapes, NOT as neon glow, NOT as purple-magenta wash, NOT as light bleed or lens flare. No saturated cyan, no hot pink, no RGB screen colors. Overall mood: quiet, warm-in-the-dark, like a hand-printed gig poster.
 ACCENT COLOR RULE - STRICT: warm amber/gold is the only accent and may cover at most 20% of the artwork, concentrated in small light shapes. Everything else stays in the dark blue-plum range."""
@@ -279,15 +279,9 @@ ACCENT COLOR RULE - STRICT: warm amber/gold is the only accent and may cover at 
 
 FIGURE_SILHOUETTE = """HUMAN FIGURES (only for the elements that contain people): Every human figure is a SINGLE FLAT SILHOUETTE in ONE dark opaque color (%(dark)s). Completely faceless: no eyes, no mouth, no nose. No skin tone of any kind - no beige, tan, yellow or pink on any human. Hair, clothing and body are the SAME single dark color as one solid shape. Only the outline carries identity."""
 
-FIGURE_COLLAGE = """HUMAN FIGURES (only for the elements that contain people): Build each person out of SEVERAL SEPARATE PIECES OF PAINTED PAPER, the way a real paper collage is assembled. A person must NOT be one single dark blob.
-Use these distinct flat colour areas, each one reading as its own hand-cut piece of gouache-painted paper:
-- HAIR: one solid dark shape (%(hair)s).
-- SKIN - face, neck, hands, arms: one flat stylised warm tone (%(skin)s). This is a painted paper colour, not photographic skin: no airbrushing, no blush, no shading, no gradient, no highlight.
-- UPPER GARMENT: one flat colour taken from the palette (%(top)s).
-- LOWER GARMENT or the remaining clothing area: a CLEARLY DIFFERENT flat palette colour (%(bottom)s).
-Where two pieces meet, leave a thin warm off-white paper seam so the collage construction stays visible.
-FACE - STRICT: the face is ONE clean flat skin-coloured shape and is COMPLETELY FEATURELESS. NO eyes, NO eyebrows, NO mouth, NO nose, NO ears, NO glasses, NO facial lines of any kind. Identity comes only from hair shape, posture and clothing colour.
-Keep every piece large and chunky. Hands are simple rounded mitten-like shapes - never draw individual fingers. No thin strips anywhere on the figure."""
+FIGURE_COLLAGE = """HUMAN FIGURES (only for the elements that contain people): build each person from SEVERAL SEPARATE PIECES of flat painted paper, never one single dark blob. HAIR: one solid dark shape (%(hair)s). SKIN (face, neck, hands, arms): one flat stylised warm tone (%(skin)s), a painted paper colour with no blush, shading, gradient or highlight. UPPER GARMENT: one flat palette colour (%(top)s). LOWER GARMENT or remaining clothing: a CLEARLY DIFFERENT flat palette colour (%(bottom)s). Leave a thin warm off-white paper seam where two pieces meet.
+FACE - STRICT: one clean flat skin-coloured shape, COMPLETELY FEATURELESS - no eyes, eyebrows, mouth, nose, ears, glasses or facial lines. Identity comes only from hair shape, posture and clothing colour.
+Keep every piece large and chunky; hands are simple rounded mitten shapes with no individual fingers, and no thin strips anywhere."""
 
 FIGURE_COLORS_DAY = {
     "dark": "deep umber",
@@ -306,37 +300,21 @@ FIGURE_COLORS_NIGHT = {
 
 NO_FIGURE = """NO HUMAN FIGURES: This photograph has no people in it. Do NOT invent, add or imagine any human figure, silhouette, face, hand or body part anywhere in the artwork. Every element is an object, a building detail or a natural form."""
 
-# ⚠️ 这一段是 v1.3 的核心修复：禁止用"删除物品"来满足粗度要求
-THICKNESS = """MANUFACTURING RULE - THICKNESS: This artwork will be printed and machine cut, so nothing thin survives.
-For every shape: if it would be thinner than a pencil in real life, THICKEN it until it is as thick as a finger.
-NEVER delete an object in order to satisfy this rule. Objects must be KEPT and REDRAWN CHUNKIER.
-Only these purely auxiliary parts may be omitted: %s.
-The object itself must always remain, redrawn as one chunky solid silhouette with a wide body.
-No hairlines. Blunt rounded corners only. Every shape looks heavy and solid, like it was cut from thick cardstock with scissors."""
+# ⚠️ 「不许靠删物品来满足粗度要求」是 v1.3 的核心修复，压缩措辞时必须保留这半句
+THICKNESS = """MANUFACTURING RULE - THICKNESS: this sheet is machine cut, so no stroke may fall below the die-cut minimum - thicken every too-thin shape into a chunky solid form with blunt rounded corners instead of deleting the object, and only these auxiliary parts may be dropped: %s."""
 
-COMPLIANCE = """MUST OMIT - copyright safety: remove all brand logos, sponsor decals, team liveries, product wordmarks, screen graphics, poster artwork, album art, anime or cartoon characters and any recognizable third-party intellectual property. Specifically remove: %s. Replace each with a plain flat painted color block, or leave it out. Render NO readable text, NO letterforms, NO numbers, NO watermarks anywhere in the artwork."""
+COMPLIANCE = """MUST OMIT - copyright safety: no brand logos, sponsor decals, team liveries, wordmarks, screen graphics, poster or album artwork, cartoon characters or any other recognizable third-party IP. Specifically remove: %s - replace each with a plain flat painted colour block. Render NO readable text, letterforms, numbers or watermarks anywhere."""
 
 # ⚠️ 元素构成配比 —— 解决"全是人物剪影"的关键
+# 「不许把切片补成整只」的形状忠实度约束也放这里：客户实拍中三角蛋糕被泛化成圆蛋糕。
 COMPOSITION = """ELEMENT COMPOSITION - MANDATORY, THIS IS THE MOST IMPORTANT RULE:
-Produce exactly %(n)d separate sticker elements. The mix is fixed:
-- AT LEAST %(nobj)d of them must be STANDALONE OBJECT stickers: a single object alone, with NO person in it, NO scenery behind it, NO stage, NO floor, NO background. Just the object, cut out.
-  The objects to draw, one per element, are exactly these: %(objs)s.
-- Exactly %(nppl)d of them may contain a human figure (drawn exactly as described in the HUMAN FIGURES rule above). If that number is 0, NO element may contain any human figure at all.
-Do NOT turn object elements into little scenes. Do NOT put people inside object elements. Do NOT merge two objects into one element. Do NOT substitute an object with a person.
-
-DRAW EVERY LISTED OBJECT - NO SUBSTITUTION, NO OMISSION:
-Each object in that list must appear as its own sticker. Do not silently drop one, do not replace one with a different object you find more interesting, and do not draw the same object twice. If an object seems small or delicate, draw it BIGGER and CHUNKIER - never leave it out.
-
-NO DUPLICATES, NO CONTAINERS - the elements must be visibly distinct from each other:
-- Cut each object out of its surroundings. NEVER include the table, tabletop, floor, ground, stage, shelf or any large surface it was resting on - the sticker must not sit on a slab of scenery.
-- A small vessel that genuinely belongs to the object MAY stay with it, because it makes the sticker read better: a slice of cake may keep its own small plate, a drink may keep its glass, a candle may keep its holder. But that vessel must then NOT appear again as a sticker of its own.
-- No two elements may look alike. Never draw two instruments of the same family, two pieces of the same tableware, or two variations of the same object. If two listed objects would end up with a similar flat silhouette, make them clearly different in shape, size and colour.
-The chosen objects must SPAN DIFFERENT CATEGORIES - do not make them all the same kind of thing. Include equipment, furniture, lighting, tableware or props as available, not only one category.
-Each object element must be instantly recognizable on its own when peeled off and stuck into a notebook."""
+Produce exactly %(n)d separate sticker elements: %(nobj)d STANDALONE OBJECT stickers, each a single object cut out alone with NO person, NO scenery, NO stage, NO floor, NO background, plus exactly %(nppl)d element(s) that may contain a human figure (0 means none anywhere). One object per element, exactly these: %(objs)s.
+DRAW EVERY LISTED OBJECT - NO SUBSTITUTION, NO OMISSION: each keeps the exact noun it is listed as; never drop, swap, duplicate or merge one. Draw small or delicate objects BIGGER and CHUNKIER.
+SHAPE FIDELITY: keep the real shape, proportion and orientation the object has in the photograph. Never complete a partial or cut item into a whole one - a slice of cake stays a wedge, never becomes a whole round cake.
+NO DUPLICATES, NO CONTAINERS: cut each object off the table, floor, stage or shelf it rested on. A vessel that genuinely belongs to it may stay (a cake slice keeps its small plate), but must not appear again on its own. No two elements may look alike."""
 
 # 纪念物保护：即使偏细也必须加粗保留，不能被 THICKNESS 规则误删
-KEEPSAKE = """MUST KEEP - these objects carry the memory of the occasion and are the whole reason the customer ordered: %s.
-Each one MUST appear as its own sticker. They are often small or slender in the photo - that is not a reason to omit them, it is a reason to draw them LARGER and THICKER than they were. A candle becomes a short fat candle; a sparkler becomes a bold burst of chunky painted rays. Never replace them with something else, never leave them out."""
+KEEPSAKE = """MUST KEEP - these objects are the whole reason the customer ordered and each MUST appear as its own sticker: %s. Being small or slender in the photo is a reason to draw them LARGER and THICKER, never to omit or replace them."""
 
 
 EXCLUDE = """ALREADY DRAWN ON OTHER SHEETS - DO NOT REPEAT: the following subjects have already been drawn as stickers on other sheets of this same order: %s.
@@ -344,15 +322,17 @@ You must NOT draw any of them again, and you must NOT include them as part of an
 In particular, if one of your assigned objects normally sits on, in or next to one of those subjects, draw your object COMPLETELY ALONE - separated from it, not together with it on the same plate, tray, stand or surface.
 Every element on this sheet must be visibly different from that list at a glance."""
 
-LAYOUT = """LAYOUT: A sticker sheet on a plain solid pure white background. Arrange the %(n)d elements in a %(cols)d-column by %(rows)d-row grid with VERY LARGE amounts of empty white space around every single element. The empty gap between any two neighbouring elements must be at least one third of the width of the larger element - much wider than looks natural. Each element sits alone inside its own generous white breathing room, clearly isolated, never touching, never overlapping, never nearly touching. Keep a wide empty white margin of at least one tenth of the sheet width along all four edges; no element may extend into that margin. Elements are compact chunky shapes, not wide sprawling ones, each staying well inside its own grid cell. No connecting lines, no frame, no border, no captions, no numbering, no cast shadows on the white background."""
+LAYOUT = """LAYOUT: a sticker sheet on plain solid pure white, the %(n)d elements in a %(cols)d-column by %(rows)d-row grid. Leave a white gap between neighbours of at least one third of the larger element's width - much wider than looks natural - and an empty white margin of at least one tenth of the sheet width on all four edges. Each element is a compact chunky shape alone inside its own cell, never touching or overlapping. No connecting lines, frame, border, caption, numbering or cast shadow."""
 
-NEGATIVE = """DO NOT: black outlines, black keylines, photorealism, 3D render, gloss, plastic surface, airbrush, neon glow, lens flare, bokeh, gradient mesh, facial features, readable text, watermarks, thin hairline details, thin poles, thin sticks, thin strings, pure white cut-out borders, elements touching each other, elements close to the sheet edge, crowded layout, full-bleed elements, scenery inside object stickers, people inside object stickers."""
+# 只保留其它段落没说过的禁项：笔触/写实/文字/过细 分别由 STYLE、COMPLIANCE、
+# THICKNESS 各说一次，这里不再重复，避免印刷约束堆叠稀释风格段权重。
+NEGATIVE = """DO NOT: black outlines, black keylines, 3D render, plastic surface, airbrush, dry brush streaks, neon glow, lens flare, bokeh, pure white cut-out borders"""
 
-HEAD = """Reinterpret this photograph as a set of die-cut stickers in the following illustration style. Keep the recognizable subjects of the original photo. Do NOT copy the photo's lighting, and do not copy its exact colours - instead MAP each real colour onto its nearest colour in the palette below (a red candle stays red, a wooden table becomes terracotta or umber, a green wall becomes olive). Never wash the whole picture into one single hue."""
+HEAD = """Reinterpret this photograph as a set of die-cut stickers in the illustration style below. Keep the recognizable subjects, but do NOT copy the photo's lighting or exact colours - MAP each real colour onto its nearest palette colour below (a red candle stays red, a wooden table becomes terracotta, a green wall becomes olive). Never wash the picture into one single hue."""
 
 # 长 prompt 里排在最前的风格段容易被后面成堆的约束条款稀释，
 # 收尾再压一次风格（近因效应）—— 实拍中「质感变软、颜色发灰」就是被稀释掉的。
-STYLE_REMINDER = """FINAL STYLE CHECK - the artwork must look like: thick opaque gouache paint on textured paper, hand-torn and hand-cut, assembled as a collage. Crisp flat colour areas with visible paper grain and a warm cream torn edge on every piece. Rich saturated earthy pigment - NOT pale, NOT washed out, NOT airbrushed, NOT soft-blended watercolour, NOT a uniform sage-green cast."""
+STYLE_REMINDER = """FINAL STYLE CHECK - the artwork must read as: flat solid colour blocks, crisp cut-paper silhouette, minimal internal texture. Every piece is one clean opaque shape of gouache-painted paper with a warm cream cut edge. Rich saturated earthy pigment - NOT pale, NOT washed out, NOT brush-streaked, NOT soft-blended, NOT a uniform sage-green cast."""
 
 GRID = {4: (2, 2), 5: (2, 3), 6: (2, 3), 7: (2, 4), 8: (2, 4), 9: (3, 3)}
 
@@ -580,7 +560,7 @@ def build_prompt(info, n, patches=None, figure_style="collage", exclude=None):
         LAYOUT % {"n": n, "cols": cols, "rows": rows},
         NEGATIVE + (", skin tones on figures, multicolour figures"
                     if figure_style == "silhouette" else
-                    ", single-colour featureless blobs for people, people rendered as one flat dark shape with no clothing colour"),
+                    ", people as one flat single-colour blob with no clothing colour"),
     ]
     if patches:
         parts.append("CORRECTIONS - the previous attempt failed quality control. Fix these specific problems:\n" +

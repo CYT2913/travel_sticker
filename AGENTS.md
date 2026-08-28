@@ -91,7 +91,7 @@ python3 tests/test_select_objects.py        # 无需 pytest
 python3 -m pytest tests/ -v                 # 有 pytest 时
 ```
 
-测试覆盖三个真实出现过的缺陷（纪念物被截断、容器重复、同族重复），**不调用任何 AI 接口、不产生费用、可离线运行**。当前 8 项全绿。改动 `select_objects()` / `_family()` / `build_prompt()` 后必须重跑。
+测试覆盖三个真实出现过的缺陷（纪念物被截断、容器重复、同族重复），**不调用任何 AI 接口、不产生费用、可离线运行**。当前 11 项全绿。改动 `select_objects()` / `_family()` / `build_prompt()` 后必须重跑。
 
 ### 0.6 代码检查
 
