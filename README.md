@@ -125,7 +125,7 @@ generate_image(photo_path, prompt, out_png)   # 图生图
 analyze_images(paths, task)                   # 视觉理解
 ```
 
-支持 `openai`（默认 `gpt-image-2`）、`volcengine`（火山方舟）、`aime`。生图和视觉可以分别配置：
+支持 `openai`（默认 `gpt-image-2`）、`volcengine`（火山方舟）、`cmd`（任意外部命令）。生图和视觉可以分别配置：
 
 ```bash
 export FORGE_PROVIDER=openai

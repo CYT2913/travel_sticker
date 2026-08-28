@@ -7,7 +7,7 @@
 ## 2026-08-28 · 修复后首次实拍验证 + 新增 2 单交付 · v3.2
 
 **已完成**
-- **修复后代码首次真跑生图**（provider=aime），两张新照片全部通过：
+- **修复后代码首次真跑生图**，两张新照片全部通过：
   - 鸟巢（2268×4032）：第 3 轮通过。第 1、2 轮均被**新增的容器质检**拦下（帐篷/灯头/鸟巢带着底座和地面）
   - 银杏（4032×3024）：第 2 轮通过。第 1 轮被**新增的重复质检**拦下（ginkgo leaf 与 leaf cluster 同族）
 - v3.1.1 三项新质检（duplicate / container / missing）**实拍确认有效**，均真实触发了定向重试
@@ -24,14 +24,14 @@
 
 **变更文件**：`memory-sticker-forge/forge.py`（词库）、`memory-sticker-studio/`（新仓库）
 
-**待下一步**：需用户提供 GitHub 仓库地址与 PAT 才能 push；`gpt-image-2` 真实调用仍未验证（本次走 aime provider）
+**待下一步**：需用户提供 GitHub 仓库地址与 PAT 才能 push；`gpt-image-2` 真实调用仍未验证（本次走的是内部图生图后端）
 
 ---
 
 ## 2026-08-27 · 真实出图验证 + v2 交付 · v3.2
 
 **已完成**
-- ✅ **首次真实生图验证 v3.1.1 修复效果**（provider=aime / image-gen 4k），4 张照片全部通过双重质检
+- ✅ **首次真实生图验证 v3.1.1 修复效果**，4 张照片全部通过双重质检
 - 新增 `COMPOSITE_REPLACE` 复合体拆解表 + `_decompose()`：整套装备自动换成单件
 - `PREFLIGHT_TASK` 新增规则 5：禁止选 kit / set / rig / stand / tripod / rack 类成套装备
 - 产出 v2 交付包（8 个文件）并上传飞书云空间
@@ -60,13 +60,12 @@
 - 编辑 `_family()` docstring 时误删首行导致语法错误，已修复
 
 **交付物**
-- 飞书云空间：https://bytedance.larkoffice.com/drive/folder/PJBYf9ljalAH0ndJoFIcG6AFnv8
 - 8 个文件 = 4×内嵌图刀线 SVG + 4×A5 原图 PNG（2331×3307 = 148×210mm @400dpi，实测精确）
 - 本地：`交付_v2_20260827/`（另含 4 份纯刀线 SVG）
 
 **变更文件**：`memory-sticker-forge/forge.py`
 
-**待下一步**：首单打样确认色差（文件为 RGB）；`gpt-image-2` 仍未实测，本次走的是 aime provider
+**待下一步**：首单打样确认色差（文件为 RGB）；`gpt-image-2` 仍未实测，本次走的是内部图生图后端
 
 ---
 
@@ -180,7 +179,7 @@
 ## 2026-08-25 · Codex / 本地迁移改造 · v2.2
 
 **已完成**
-- 新增 `providers.py` 适配层，隔离全部 Aime 内部依赖
+- 新增 `providers.py` 适配层，隔离全部平台相关依赖
 - `forge.py` 清理残留内部路径常量（`VISION`、`IMGEDIT_DIR`）
 - 工具路径支持环境变量覆盖与多级自动查找
 - 新增 `tools/selftest_provider.py`：三级自检，退出码 0/1/2/3 分别对应通过/配置缺失/调用失败/输出不达标
