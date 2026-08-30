@@ -271,6 +271,11 @@ Overall mood: warm, muted, slightly faded like a risograph print."""
 PALETTE_NIGHT = """NIGHT PALETTE: deep indigo, ink navy, charcoal plum, slate blue-grey, with warm amber and pale gold as the light sources. Stage or street lighting is reinterpreted as flat amber and gold paper shapes, NOT as neon glow, NOT as purple-magenta wash, NOT as light bleed or lens flare. No saturated cyan, no hot pink, no RGB screen colors. Overall mood: quiet, warm-in-the-dark, like a hand-printed gig poster.
 ACCENT COLOR RULE - STRICT: warm amber/gold is the only accent and may cover at most 20% of the artwork, concentrated in small light shapes. Everything else stays in the dark blue-plum range."""
 
+# v3.3.2 增补：跨枚色彩分布。v34 p1 实拍暴露「6 枚里 4 枚全落在黄/金/米色、
+# 金属勺被染成金黄、整版发闷」，根因是缺少跨枚层面的配色约束。只增不改，
+# 不触碰 STYLE / STYLE_REMINDER / THICKNESS / NEGATIVE 的既有措辞。
+COLOR_SPREAD = """PALETTE SPREAD ACROSS THE ELEMENTS: the elements together must read as a high-contrast set - never let them all land in the same yellow / gold / beige hue range. Keep each object's own local colour from the photograph: metal stays cool grey-silver, white or cream objects stay off-white, and nothing gets dyed warm yellow just to match the palette. At least one element must be a DEEP DARK anchor (deep umber, ink brown or deep red) and at least one a COOL note (forest green, olive or slate blue-grey)."""
+
 # ── 人物两档 ──────────────────────────────────────────────────────────────
 # 档 A silhouette：单色深色剪影。最保守，绝无肖像争议，但视觉上"没有皮肤和衣服颜色"。
 # 档 B collage（默认）：分色剪纸拼贴人物。仍然完全无脸，但头发/皮肤/上衣/下装各是
@@ -535,6 +540,7 @@ def build_prompt(info, n, patches=None, figure_style="collage", exclude=None):
     parts = [
         HEAD, STYLE,
         PALETTE_NIGHT if night else PALETTE_DAY,
+        COLOR_SPREAD,
     ]
     if n_ppl > 0:
         cols_fig = FIGURE_COLORS_NIGHT if night else FIGURE_COLORS_DAY
