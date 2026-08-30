@@ -323,6 +323,9 @@ def main():
                          "物理尺寸看起来正常、doctor 也按画布报 400dpi，但实际细节已经糊了。"
                          "默认 300")
     ap.add_argument("--cols", type=int, default=0, help="强制列数，0=按元素数自适应")
+    # 25mm² = 「视为有效元素的最小面积」。它和 make_memory_card.py 的
+    # MIN_ELEM_AREA_MM2=120（「值得上卡的最小面积」）是两个不同用途的阈值，
+    # 故意不统一：这里调高会漏数小元素 → 元素数≠刀线数被判粘连。详见那边注释。
     ap.add_argument("--min-area", type=float, default=25.0, help="忽略小于此面积的碎片 mm²")
     ap.add_argument("--outdir", default=".", help="输出目录")
     ap.add_argument("--name", default="relayout", help="输出文件名前缀")

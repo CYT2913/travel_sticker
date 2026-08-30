@@ -281,6 +281,9 @@ def main():
     ap.add_argument("--offset-target", type=float, default=1.5, help="白边 offset 目标值 mm（行业建议 1.5~2）")
     ap.add_argument("--offset-max", type=float, default=2.5, help="白边 offset 上限 mm")
     ap.add_argument("--corner-radius", type=float, default=1.0, help="尖角圆角化半径 mm")
+    # 25mm² = 「视为有效元素的最小面积」。它和 make_memory_card.py 的
+    # MIN_ELEM_AREA_MM2=120（「值得上卡的最小面积」）是两个不同用途的阈值，
+    # 故意不统一：这里调高会漏数小元素 → 元素数≠刀线数被判粘连。详见那边注释。
     ap.add_argument("--min-area", type=float, default=25.0, help="忽略小于此面积的碎片 mm²")
     ap.add_argument("--bridge-limit", type=float, default=2.0, help="内部缝隙糊掉比例上限 %%")
     ap.add_argument("--outdir", default="out")

@@ -348,6 +348,16 @@ def _pick(table, kind):
 def generate_image(photo_path, prompt, out_png):
     """图生图。返回 out_png 路径。会校验输出分辨率并在不足时明确报错。"""
     fn, name = _pick(_GEN, "image")
+    # 先删掉可能存在的同名旧文件：同一个 outdir 被重跑时，上一次的 round1.png
+    # 会留在那儿；本次生图失败的话，下面的 os.path.exists 检查就会把【旧文件】
+    # 当成本次产物放行并交付。这类「认领了不属于本次调用的文件」的缺陷
+    # 2026-08-30 在内部运行版上真实发生过（并行跑图互相偷图），所以两边都要挡。
+    if os.path.exists(out_png):
+        try:
+            os.remove(out_png)
+        except OSError as e:
+            raise ProviderError("无法清除旧产物 %s（%s），拒绝在可能交付旧图的情况下继续"
+                                % (out_png, e))
     fn(photo_path, prompt, out_png)
     if not os.path.exists(out_png) or os.path.getsize(out_png) == 0:
         raise ProviderError("provider %s 没有产出有效图片" % name)

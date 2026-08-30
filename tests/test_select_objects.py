@@ -258,6 +258,126 @@ def test_text_dependent_beats_keepsake_hint():
     assert "temple plaque" not in picked, "被标成纪念物也不该顶掉真物件：%s" % picked
 
 
+# ── 11. 兜底回填不得绕过同族检查（缺陷 2 · 2026-08-30 · v35 06 银杏）────────
+
+def test_backfill_prefers_different_family():
+    """
+    实拍缺陷：同族剔除本身是对的（日志确实打了「已剔除 tree trunk（与已选物品
+    同族）」），但候选不足时的兜底回填【没过同族检查】，把刚剔掉的又放回来了 ——
+    06 银杏首跑最终选中 ginkgo leaf + ginkgo tree + tree trunk 三枚树体部件。
+
+    这一项测「还有不同族候选可用」的分支：必须先回填不同族的，
+    一枚同族件都不许放回，日志里也不该出现同族回填警告。
+    """
+    info = {
+        "standalone_objects": ["ginkgo leaf", "tree trunk", "tree branch",
+                               "stone bench", "bicycle"],
+        "keepsake_objects": [],
+        "container_pairs": [],
+        # 显式同族对：bicycle 先被剔掉，于是主流程只剩 2 枚，必须走兜底回填
+        "similar_pairs": [["stone bench", "bicycle"]],
+    }
+    picked, dropped = forge.select_objects(info, 3)
+    assert len(picked) == 3, "枚数不足：%s" % picked
+    tree_fam = forge._family("ginkgo leaf")
+    trees = [p for p in picked if forge._family(p) == tree_fam]
+    assert len(trees) == 1, "有不同族候选可用时仍回填了同族件：%s" % picked
+    assert "bicycle" in picked, "应优先回填不同族的 bicycle：%s" % picked
+    assert not [d for d in dropped if "回填了同族元素" in d], \
+        "不该触发同族回填警告：%s" % dropped
+
+
+def test_backfill_allows_same_family_only_when_quota_needs_it():
+    """
+    另一个分支：所有剩余候选都同族，不回填就凑不满 6 枚。
+    此时允许同族回填（枚数是硬约束），但必须在日志里明确警告，方便事后定位。
+    """
+    info = {
+        "standalone_objects": ["ginkgo leaf", "ginkgo tree", "tree trunk",
+                               "stone bench", "bicycle", "red lantern"],
+        "keepsake_objects": ["ginkgo leaf"],
+        "container_pairs": [], "similar_pairs": [],
+    }
+    picked, dropped = forge.select_objects(info, 6)
+    assert len(picked) == 6, "枚数硬约束被破坏：%s" % picked
+    warns = [d for d in dropped if "回填了同族元素" in d]
+    assert len(warns) == 2, "同族回填必须逐条警告，实际：%s" % dropped
+    for w in warns:
+        assert "候选不足" in w, "警告没说明原因：%s" % w
+    assert any("ginkgo tree" in w or "tree trunk" in w for w in warns), warns
+
+
+def test_backfill_still_puts_containers_last():
+    """回填顺序不能乱：空容器（盘子）是最后的手段，同族件也排在它前面。"""
+    info = {
+        "standalone_objects": ["cheesecake", "plate", "ginkgo leaf", "tree trunk"],
+        "keepsake_objects": ["cheesecake"],
+        "container_pairs": [["cheesecake", "plate"]],
+        "similar_pairs": [],
+    }
+    picked, dropped = forge.select_objects(info, 4)
+    assert len(picked) == 4, "枚数不足：%s" % picked
+    assert picked.index("tree trunk") < picked.index("plate"), \
+        "容器项应排在同族回填之后：%s" % picked
+
+
+# ── 12. 集合名词的中心词（leaf pile 类漏判）────────────────────────────────
+
+def test_collective_noun_resolves_to_member_family():
+    """`leaf pile` 的中心词是 pile，原来落不进树体族 → 「单叶 + 叶堆」同版共存。
+    集合名词（pile / cluster / bunch / bundle / stack / heap…）要按被数的那个
+    东西判族。"""
+    tree = forge._family("ginkgo leaf")
+    for n in ("leaf pile", "leaf heap", "leaves pile", "branch bundle",
+              "pile of leaves", "twig bunch"):
+        assert forge._family(n) == tree, "%s 应与树体同族（实际 %s）" % (n, forge._family(n))
+    flower = forge._family("flower")
+    for n in ("flower bunch", "petal cluster", "flower bouquet", "blossom cluster"):
+        assert forge._family(n) == flower, "%s 应与花同族" % n
+    assert forge._family("stone stack") == forge._family("stone block")
+    # 别过度归族：被数的东西不认识时就该返回 None，而不是硬塞进某族
+    assert forge._family("firewood pile") is None
+
+
+def test_leaf_pile_no_longer_doubles_up_in_selection():
+    """整条链路验证：单叶 + 叶堆不再同版共存（有别的候选时）。"""
+    info = {
+        "standalone_objects": ["ginkgo leaf", "leaf pile", "stone bench",
+                               "bicycle", "red lantern", "wooden gate"],
+        "keepsake_objects": ["ginkgo leaf"],
+        "container_pairs": [], "similar_pairs": [],
+    }
+    picked, dropped = forge.select_objects(info, 5)
+    assert len(picked) == 5
+    assert "leaf pile" not in picked, "叶堆与单叶同族，不该同版：%s" % picked
+
+
+# ── 13. board / screen 不得误伤案板与屏风（存疑项 3）──────────────────────
+
+def test_text_dependent_does_not_hit_cutting_board_or_folding_screen():
+    """`board` / `screen` 原来是整词命中，案板/砧板/屏风/平板全被当空色块降权。
+    收窄成短语匹配后，这些必须不再命中，而真正的展板/告示屏仍要命中。"""
+    for good in ("cutting board", "chopping board", "wooden board", "folding screen",
+                 "screen door", "graphics tablet", "surfboard", "keyboard"):
+        assert not forge._text_dependent(good), "%s 被误判成空色块件" % good
+    for bad in ("information board", "exhibition board", "display screen",
+                "led screen", "signboard", "notice sign", "temple plaque",
+                "birthday banner", "movie poster", "stone tablet"):
+        assert forge._text_dependent(bad), "%s 应判为「去字后只剩空色块」" % bad
+
+
+def test_cutting_board_is_selectable_normally():
+    """厨房场景里案板是正常物件，不该被垫底到最后。"""
+    info = {
+        "standalone_objects": ["cutting board", "iron wok", "ceramic bowl",
+                               "kitchen knife", "bamboo steamer", "exhibition board"],
+        "keepsake_objects": [], "container_pairs": [], "similar_pairs": [],
+    }
+    picked, _ = forge.select_objects(info, 5)
+    assert "cutting board" in picked, "案板被当成空色块剔除了：%s" % picked
+    assert "exhibition board" not in picked, "真正的展板仍应降权：%s" % picked
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

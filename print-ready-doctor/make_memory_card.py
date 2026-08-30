@@ -74,6 +74,19 @@ SCENE_RATIO = 0.545             # 场景图占可用宽度的比例
 GRAB_DILATE_MM = 0.35
 GRAB_FEATHER_PX = 1.6
 MIN_ELEM_AREA_MM2 = 120.0
+# ⚠️ 这个 120 和 relayout.py / print_ready_doctor.py 的 `--min-area 25` 是
+#    【两个不同用途的阈值，故意不统一】（2026-08-30 复盘结论）：
+#      · 这里的 120mm² = 「值得上卡的最小面积」。卡纸右栏只放 5~6 枚主件，
+#        比这更小的碎件（花瓣、碎屑、投影残块）摆上去只会显脏，宁可不放。
+#        约合 11×11mm，也正好是手账贴纸能看清图案的下限。
+#      · 那边的 25mm²  = 「视为有效元素的最小面积」。印前质检与重排必须把
+#        每一枚真元素都数进去，漏数一枚就会判「元素数 ≠ 刀线数 → 粘连」，
+#        所以阈值必须远低于上卡门槛。
+#    两边调成一样，两个方向都会出事：调到 25 → 卡纸上出现碎渣；
+#    调到 120 → 印前漏数小元素、刀线少一条。要改只改自己这一侧。
+# 分行排序用的行带数量：见 grab_elements()。默认与产品规格（每版 6 枚）一致，
+# 由 --max-elements 传入，不再写死。
+DEFAULT_MAX_ELEMS = 6
 # A5 贴纸成品版的物理宽度。原来 148.0 直接写死在两处除法里，
 # 改一处漏一处就会让右栏贴纸整体缩放算错，抽成常量。
 STICKER_SHEET_WIDTH_MM = 148.0
@@ -192,8 +205,15 @@ def paper_grain(canvas, ppmm, seed=7):
 
 # ── 元素抠取 ───────────────────────────────────────────────────────────────
 
-def grab_elements(sheet_bgr, ppmm):
-    """从 A5 贴纸成品图里把每一枚元素连同它的暖白撕边一起抠出来。"""
+def grab_elements(sheet_bgr, ppmm, max_elems=DEFAULT_MAX_ELEMS):
+    """从 A5 贴纸成品图里把每一枚元素连同它的暖白撕边一起抠出来。
+
+    max_elems = 这一版预期的元素枚数，只用于下面「按阅读顺序编号」的行带划分。
+    原来这里写死 6：一旦把每版枚数改成别的（如 --elements 9 / --max-elements 12），
+    行带数还是 6，同一行的元素会被分到不同带里 → 元素编号顺序错乱，
+    而编号是交付包 01.png~06.png 和 --only/--drop 的依据，错了很难发现。
+    所以它必须跟 --max-elements 联动。
+    """
     lab, stats, keep = segment_artwork(sheet_bgr, ppmm, MIN_ELEM_AREA_MM2)
     all_mask = np.isin(lab, keep)
     dil = disk(mm2px(GRAB_DILATE_MM, ppmm))
@@ -209,8 +229,11 @@ def grab_elements(sheet_bgr, ppmm):
         out.append({"rgb": sheet_bgr[y0:y1, x0:x1].astype(np.float32),
                     "alpha": np.clip(a, 0, 1),
                     "cy": float(ys.mean()), "cx": float(xs.mean())})
-    # 按阅读顺序编号，和交付包里的 01.png~06.png 对得上
-    out.sort(key=lambda e: (round(e["cy"] / max(1, sheet_bgr.shape[0]) * 6), e["cx"]))
+    # 按阅读顺序编号，和交付包里的 01.png~06.png 对得上。
+    # 行带数取「预期枚数」与「实际检出枚数」的较大值：实际比预期多时（模型多画了
+    # 一枚），用预期值分带同样会把两行压进一带。
+    bands = max(1, int(max_elems or 0), len(out))
+    out.sort(key=lambda e: (round(e["cy"] / max(1, sheet_bgr.shape[0]) * bands), e["cx"]))
     return out
 
 
@@ -264,7 +287,7 @@ def draw_caption(canvas, text, cx_px, y_px, size_px, tracking):
 # ── 主流程 ─────────────────────────────────────────────────────────────────
 
 def build_card(scene_path, sheet_path, caption, w_mm, h_mm, dpi,
-               only=None, drop=None, max_elems=6, seed=3):
+               only=None, drop=None, max_elems=DEFAULT_MAX_ELEMS, seed=3):
     ppmm = dpi / 25.4
     W, H = int(round(w_mm * ppmm)), int(round(h_mm * ppmm))
     canvas = np.zeros((H, W, 3), np.float32)
@@ -302,7 +325,7 @@ def build_card(scene_path, sheet_path, caption, w_mm, h_mm, dpi,
     # ② 右栏贴纸样：就是 A5 成品里的那几枚本体
     sheet = imread_rgb(sheet_path, "贴纸成品图")
     sheet_ppmm = sheet.shape[1] / STICKER_SHEET_WIDTH_MM   # A5 竖版成品宽 148mm
-    elems = grab_elements(sheet, sheet_ppmm)
+    elems = grab_elements(sheet, sheet_ppmm, max_elems)
     log("· 贴纸成品里检出 %d 枚元素" % len(elems))
 
     idx = list(range(1, len(elems) + 1))
@@ -396,8 +419,9 @@ def main():
     ap.add_argument("--bleed", type=float, default=3.0, help="出血 mm，0 为不出血版")
     ap.add_argument("--only", default="", help="只用这几枚，如 1,2,3,5")
     ap.add_argument("--drop", default="", help="排除这几枚，如 6（人物那枚通常不上卡）")
-    ap.add_argument("--max-elements", type=int, default=6,
-                    help="右栏最多放几枚，默认 6（产品规格：5 物品 + 1 人物）")
+    ap.add_argument("--max-elements", type=int, default=DEFAULT_MAX_ELEMS,
+                    help="右栏最多放几枚，默认 6（产品规格：5 物品 + 1 人物）。"
+                         "同时决定元素编号的行带划分，改枚数时编号顺序自动跟着变")
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--preview-only", action="store_true", help="只出编号预览图")
     args = ap.parse_args()
@@ -407,7 +431,8 @@ def main():
 
     if args.preview_only:
         sheet = imread_rgb(args.stickers, "贴纸成品图")
-        elems = grab_elements(sheet, sheet.shape[1] / STICKER_SHEET_WIDTH_MM)
+        elems = grab_elements(sheet, sheet.shape[1] / STICKER_SHEET_WIDTH_MM,
+                              args.max_elements)
         p = os.path.join(args.outdir, "卡纸_元素编号预览.png")
         preview_index(elems, p)
         log("✅ 预览：%s（共 %d 枚）" % (p, len(elems)))

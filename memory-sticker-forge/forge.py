@@ -179,12 +179,29 @@ KEEPSAKE_WORDS = {
 #    降权逻辑在 select_objects 的排序里，兜底回填照旧生效。
 # 注：banner 原本在 KEEPSAKE_WORDS 里（生日横幅），但横幅的内容就是那行字，
 #    去字后同样只剩色块，两条规则冲突时以「去字后还剩什么」为准，故移到这里。
+#
+# ⚠️ 单词级词表里【不要】放 board / boards / screen / display / notice / tablet
+#    这类多义词（2026-08-30 复盘）：它们会误命中案板（cutting board）、
+#    屏风（folding screen）、平板电脑（tablet），把好物件当空色块降权剔除。
+#    这些词只有在确定语义的词组里才成立，一律放到下面的 TEXT_DEPENDENT_PHRASES。
 TEXT_DEPENDENT_WORDS = {
     "sign", "signs", "signage", "signboard", "signpost", "banner", "plaque",
-    "billboard", "poster", "nameplate", "placard", "board", "boards",
-    "noticeboard", "notice", "screen", "display", "label", "tag", "menu",
+    "billboard", "poster", "nameplate", "placard",
+    "noticeboard", "label", "tag", "menu",
     "certificate", "scoreboard", "marquee", "leaflet", "flyer", "brochure",
-    "inscription", "tablet",
+    "inscription",
+}
+# 词组级：整词组匹配（按词边界），只认「去字后确实只剩一块空色块」的说法。
+TEXT_DEPENDENT_PHRASES = {
+    "display board", "information board", "info board", "notice board",
+    "message board", "bulletin board", "exhibition board", "exhibit board",
+    "menu board", "sign board", "name board", "score board", "poster board",
+    "announcement board", "direction board", "departure board",
+    "display panel", "information panel", "interpretive panel",
+    "display screen", "led screen", "led display", "video screen", "video wall",
+    "big screen", "giant screen", "projection screen", "projector screen",
+    "information sign", "notice sign", "stone tablet", "memorial tablet",
+    "notice paper", "public notice",
 }
 
 
@@ -215,8 +232,17 @@ def infer_keepsakes(objs, given):
 
 
 def _text_dependent(name):
-    """这枚物体的主体价值是不是全在文字上（按合规去字后只剩一块纯色空框）。"""
-    return bool(_words(name) & TEXT_DEPENDENT_WORDS)
+    """这枚物体的主体价值是不是全在文字上（按合规去字后只剩一块纯色空框）。
+
+    两级匹配：单词级词表（sign / plaque / poster…本身就等于「一块字」）+
+    词组级词表（board / screen / display 这类多义词只在确定词组里才算）。
+    词组按【词边界】匹配，所以 "cutting board"（案板）、"folding screen"（屏风）
+    不会被误判 —— 这是 2026-08-30 复盘时收窄的。
+    """
+    if _words(name) & TEXT_DEPENDENT_WORDS:
+        return True
+    padded = " %s " % _norm(name)
+    return any((" %s " % p) in padded for p in TEXT_DEPENDENT_PHRASES)
 
 
 def preflight(photo, workdir):
@@ -465,6 +491,19 @@ def _singular(word):
     return word
 
 
+# 集合名词：这类词做中心词时不代表物品本身，只是「一堆」的量词。
+# 实拍漏判（2026-08-30 · v35）：leaf pile 的中心词是 pile，落不进树体族，
+# 结果「单叶 + 叶堆」可能同版共存。真正决定剪纸轮廓的是被数的那个东西，
+# 所以遇到这种结构要先用前一个词（leaf）判族，判不出来再退回用集合名词本身。
+# 注意 "pile of leaves" 这种写法不需要特殊处理 —— 它的最后一个词已经是 leaves。
+COLLECTIVE_HEADS = {
+    "pile", "piles", "heap", "heaps", "stack", "stacks", "cluster", "clusters",
+    "bunch", "bunches", "bundle", "bundles", "clump", "clumps", "mound",
+    "mounds", "pair", "pairs", "bouquet", "bouquets", "row", "rows",
+    "group", "groups", "collection", "collections",
+}
+
+
 def _family(name):
     """
     用【中心词】判定所属物品族，而不是子串匹配。
@@ -472,15 +511,21 @@ def _family(name):
     guitar amplifier→amplifier，microphone→microphone。
     子串匹配会把 microphone 误判成 phone、guitar amplifier 误判成 guitar、
     bass drum 误判成 bass(guitar)，导致候选被过度砍光。
+
+    例外：中心词是集合名词（leaf pile / flower bunch / stone stack）时，
+    先用它前面那个被数的词判族，见 COLLECTIVE_HEADS。
     """
     words = _norm(name).split()
     if not words:
         return None
-    head = words[-1]
-    for cand in (head, _singular(head)):
-        for i, fam in enumerate(SIMILAR_FAMILIES):
-            if cand in fam:
-                return i
+    heads = [words[-1]]
+    if len(words) > 1 and words[-1] in COLLECTIVE_HEADS:
+        heads.insert(0, words[-2])          # 优先用「被数的那个东西」判族
+    for head in heads:
+        for cand in (head, _singular(head)):
+            for i, fam in enumerate(SIMILAR_FAMILIES):
+                if cand in fam:
+                    return i
     # 中心词没命中时，再用整名做一次严格的词组匹配（如 "hi hat"）
     full = _norm(name)
     for i, fam in enumerate(SIMILAR_FAMILIES):
@@ -585,21 +630,42 @@ def select_objects(info, n_obj):
             break
 
     # ④ 兜底：若过滤太狠导致数量不足，分层放宽。
-    #    容器重复项（盘子）永远不回填 —— 单独出就是废件；
-    #    同族项可以回填，缺枚数比轻微雷同更糟。
+    #
+    # ⚠️ 缺陷（2026-08-30 · v35 06 银杏实拍，已修）：这里原来只排除容器项，
+    #    【没有过同族检查】，于是刚在 ③ 里被剔掉的同族件又被原样放回来 ——
+    #    日志明明打了「已剔除 tree trunk（与已选物品同族）」，最终却选中
+    #    ginkgo leaf + ginkgo tree + tree trunk 三枚树体部件。去重白做了。
+    #
+    # 现在分三档，档与档之间严格递进，枚数硬约束仍然保住：
+    #    档 1  非容器 + 不同族   —— 正常情况到这里就够了
+    #    档 2  非容器 + 允许同族 —— 只有「所有剩余候选都同族、否则凑不满」时才走，
+    #                              且必须在日志里明确警告，事后好定位
+    #    档 3  连容器项也用上   —— 最后的手段（盘子单独出是废件，能不用就不用）
+    def _backfill(pool, allow_same_family):
+        for o in pool:
+            if len(picked) >= n_obj:
+                return
+            if _norm(o) in {_norm(p) for p in picked}:
+                continue
+            fam = _family(o)
+            same_fam = fam is not None and fam in used_fam
+            if same_fam and not allow_same_family:
+                continue
+            if same_fam:
+                dropped.append("⚠️ 因候选不足，回填了同族元素 %s（与已选物品同族，"
+                               "轮廓可能雷同；枚数是硬约束，缺枚比轻微雷同更糟）" % o)
+            picked.append(o)
+            if fam is not None:
+                used_fam.add(fam)
+
+    non_container = [o for o in objs if _norm(o) not in contained]
     if len(picked) < n_obj:
-        for o in objs:
-            if o not in picked and _norm(o) not in contained:
-                picked.append(o)
-                if len(picked) >= n_obj:
-                    break
+        _backfill(non_container, False)
+    if len(picked) < n_obj:
+        _backfill(non_container, True)
     # 仍不足才动容器项
     if len(picked) < n_obj:
-        for o in objs:
-            if o not in picked:
-                picked.append(o)
-                if len(picked) >= n_obj:
-                    break
+        _backfill(objs, True)
     # 把「降权后没被选上」的低价值件如实记进日志，方便复盘为什么没有它
     _pick = {_norm(o) for o in picked}
     for o in objs:
@@ -968,7 +1034,11 @@ def main():
     if info.get("keepsake_objects"):
         log("  ▸ 纪念物   : %s（强制保留，不得省略）" % ", ".join(info["keepsake_objects"]))
     for dp in dropped:
-        log("  ▸ 已剔除   : %s" % dp)
+        # 回填告警不是「剔除」，得单独一个前缀，否则日志自相矛盾、事后很难看懂
+        if dp.startswith("⚠️"):
+            log("  ▸ 选品告警 : %s" % dp)
+        else:
+            log("  ▸ 已剔除   : %s" % dp)
     if info.get("_rescued_from_thin"):
         log("  ▸ 已从纤细件中救回主体物品 : %s" % ", ".join(info["_rescued_from_thin"]))
 
