@@ -67,6 +67,23 @@ NEIGHBOR_CLEARANCE_MM = 0.4    # 两枚刀线之间必须保留的净距
 
 # ---------------------------------------------------------------- 基础工具
 
+def open_photo(path):
+    """
+    读图统一入口。所有拿到「外部传进来的图片路径」的地方都走这里。
+
+    两件事：
+      1. 按 EXIF Orientation 摆正。本工具链正常只吃自己生成的 PNG（没有 EXIF，
+         此调用是无操作），但命令行允许传任意图片，一旦有人直接丢一张手机
+         原图进来，不摆正就会按躺着的像素去算成品尺寸和刀线。
+      2. 出错时给出明确报错，而不是抛 PIL 的原始异常。
+    """
+    from PIL import ImageOps
+    try:
+        return ImageOps.exif_transpose(Image.open(path))
+    except FileNotFoundError:
+        raise SystemExit("❌ 读不到图片：%s（路径不存在）" % path)
+
+
 def mm2px(mm, ppmm):
     return max(1, int(round(mm * ppmm)))
 
@@ -270,7 +287,7 @@ def main():
     ap.add_argument("--report-only", action="store_true")
     args = ap.parse_args()
 
-    pil = Image.open(args.image)
+    pil = open_photo(args.image)
     src_mode = pil.mode
     img = np.array(pil.convert("RGB"))
     H, W = img.shape[:2]
@@ -291,6 +308,14 @@ def main():
     raw = raw_artwork_mask(img, ppmm, denoise=True)   # 仅用于测细笔画/缝隙
     lab, stats, keep = segment_artwork(img, ppmm, args.min_area)
     print(f"[分割] {len(keep)} 枚独立元素\n")
+    if not keep:
+        # 早期版本在这里不判空，后面 min(e.cut_width_mm for e in elements) 直接
+        # 抛 ValueError: min() arg is an empty sequence，看不出根因。
+        print(f"❌ 没分割出任何元素：整张图都被判成背景，或所有连通块都小于 "
+              f"--min-area {args.min_area}mm²。\n"
+              f"   常见原因：传错了文件（传的是刀线图/预览图）、图是纯白、"
+              f"或 --sheet-width 给错导致 mm² 换算失真。")
+        return 2
 
     # 预先算每枚到其他元素的净距。
     # 注意：必须只用 keep 里的元素构建，若用 (lab>0) 会把已被过滤的碎点
@@ -425,10 +450,10 @@ def main():
         cut_layer = ('  <g id="CutContour" fill="none" stroke="#FF00FF" '
                      f'stroke-width="{max(1.0, 0.09*ppmm):.2f}">\n'
                      + "".join(f'    <path d="{d}"/>\n' for d in paths) + "  </g>\n")
-        with open(os.path.join(args.outdir, "cutline.svg"), "w") as f:
+        with open(os.path.join(args.outdir, "cutline.svg"), "w", encoding="utf-8") as f:
             f.write(head + f'  <g id="Artwork"><image xlink:href="{art_rel}" '
                            f'x="0" y="0" width="{W}" height="{H}"/></g>\n' + cut_layer + "</svg>\n")
-        with open(os.path.join(args.outdir, "cutline_only.svg"), "w") as f:
+        with open(os.path.join(args.outdir, "cutline_only.svg"), "w", encoding="utf-8") as f:
             f.write(head + cut_layer + "</svg>\n")
 
     # ---- 报告
@@ -441,7 +466,7 @@ def main():
            "layout_ok": layout_ok, "merged_pairs": max(0, merged),
            "prepress": prepress, "elements": [asdict(e) for e in elements],
            "spare_priority": [e.idx for e in ranked]}
-    with open(os.path.join(args.outdir, "report.json"), "w") as f:
+    with open(os.path.join(args.outdir, "report.json"), "w", encoding="utf-8") as f:
         json.dump(res, f, ensure_ascii=False, indent=2)
 
     L = [f"# 模切体检报告 · {os.path.basename(args.image)}", "",
@@ -471,7 +496,7 @@ def main():
           f"- 备损优先备：**{'、'.join('#'+str(e.idx) for e in ranked[:2])}**", ""]
     if not layout_ok:
         L += ["> ⚠️ 存在刀线粘连，**不要送厂**。请加大元素间距后重新导出。", ""]
-    with open(os.path.join(args.outdir, "report.md"), "w") as f:
+    with open(os.path.join(args.outdir, "report.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(L))
 
     print(f"[结论] 必须修 {n_must} 枚 / 高风险 {n_high} 枚 | "

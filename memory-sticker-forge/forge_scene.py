@@ -57,7 +57,8 @@ def main():
     os.makedirs(work, exist_ok=True)
 
     if args.preflight and os.path.exists(args.preflight):
-        info = json.load(open(args.preflight))
+        with open(args.preflight, encoding="utf-8") as f:
+            info = json.load(f)
         small = forge.shrink(args.photo, os.path.join(work, "src_small.jpg"))
         forge.log("· 复用已有 G0：%s" % args.preflight)
     else:
@@ -72,7 +73,8 @@ def main():
         raise SystemExit("❌ G0 未通过：\n" + "\n".join("  · " + b for b in blocks))
 
     prompt = forge.build_scene_prompt(info, figure_style=args.figure)
-    open(os.path.join(args.outdir, "scene_prompt.txt"), "w").write(prompt)
+    with open(os.path.join(args.outdir, "scene_prompt.txt"), "w", encoding="utf-8") as f:
+        f.write(prompt)
 
     # 场景图是满幅构图，不走 2:3 贴纸版比例
     os.environ["FORGE_ASPECT"] = args.aspect
@@ -83,8 +85,9 @@ def main():
     except providers.ProviderError as e:
         raise SystemExit("❌ %s" % e)
 
-    from PIL import Image
-    w, h = Image.open(dst).size
+    # 这里读的是我们自己刚生成的 scene.png（无 EXIF），仍走统一入口，
+    # 避免以后有人把这行复制到读用户原图的地方
+    w, h = forge.open_photo(dst).size
     forge.log("✅ 场景图：%s  %dx%d" % (dst, w, h))
     forge.log("   下一步：python3 ../print-ready-doctor/make_memory_card.py "
               "--scene %s --stickers <FINAL.png> --outdir <交付目录>" % dst)

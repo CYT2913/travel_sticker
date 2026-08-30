@@ -67,10 +67,23 @@ SHEET_HEIGHT_MM = 210         # A5 竖版高（重排后的成品画布）
 
 def log(msg): print(msg, flush=True)
 
+def open_photo(path):
+    """
+    读取【用户原始照片】的唯一入口。所有读图都必须走这里，不要直接 Image.open()。
+
+    为什么必须有这个函数（2026-08-30 · 06 银杏实拍回归）：
+    手机拍的照片普遍把方向记在 EXIF Orientation 里（横拍竖持 = 6），像素本身是
+    躺着的。直接按像素读图，生成的场景图就整幅横躺 —— 而这类问题所有自动检查
+    都发现不了（dpi/邻距/枚数全合格），只有肉眼看成品才知道。
+    `ImageOps.exif_transpose` 按 Orientation 旋转并抹掉该标签；对没有 EXIF 的
+    PNG（我们自己生成的中间产物）是无操作，因此统一走这里不会有副作用。
+    """
+    from PIL import Image, ImageOps
+    return ImageOps.exif_transpose(Image.open(path))
+
 def shrink(src, dst, box=1600, q=88, limit=VISION_MAX_BYTES):
     """压到视觉模型能吃的尺寸。质检必须用原图跑 doctor，压缩图只给视觉模型。"""
-    from PIL import Image
-    im = Image.open(src); im.thumbnail((box, box))
+    im = open_photo(src); im.thumbnail((box, box))
     im.convert("RGB").save(dst, quality=q)
     while os.path.getsize(dst) > limit and q > 40:
         q -= 8
@@ -155,8 +168,23 @@ CONTAINED_WORDS = {
 KEEPSAKE_WORDS = {
     "candle", "sparkler", "firework", "balloon", "gift", "present", "ribbon",
     "bouquet", "flower", "rose", "cake", "ticket", "medal", "trophy", "ring",
-    "lantern", "wish", "card", "letter", "badge", "crown", "banner", "toast",
+    "lantern", "wish", "card", "letter", "badge", "crown", "toast",
     "champagne", "confetti", "lucky", "charm", "souvenir", "postcard", "stamp",
+}
+# 「主体价值依赖文字」的物件 —— 合规硬要求是画面里不许出现任何可读文字，
+# 这类东西去掉字就只剩一个纯色空框，单独做贴纸几乎没有价值。
+# 实拍证据（2026-08-30）：03 故宫匾额去字后是纯蓝空框、04 志愿活动展板是一大块
+# 空深棕、05 鸟巢告示牌是空色块。
+# ⚠️ 只降权、不硬删：候选实在不够时，一枚空色块仍然好过整版缺一枚。
+#    降权逻辑在 select_objects 的排序里，兜底回填照旧生效。
+# 注：banner 原本在 KEEPSAKE_WORDS 里（生日横幅），但横幅的内容就是那行字，
+#    去字后同样只剩色块，两条规则冲突时以「去字后还剩什么」为准，故移到这里。
+TEXT_DEPENDENT_WORDS = {
+    "sign", "signs", "signage", "signboard", "signpost", "banner", "plaque",
+    "billboard", "poster", "nameplate", "placard", "board", "boards",
+    "noticeboard", "notice", "screen", "display", "label", "tag", "menu",
+    "certificate", "scoreboard", "marquee", "leaflet", "flyer", "brochure",
+    "inscription", "tablet",
 }
 
 
@@ -186,9 +214,15 @@ def infer_keepsakes(objs, given):
     return [o for o in objs if _words(o) & KEEPSAKE_WORDS]
 
 
+def _text_dependent(name):
+    """这枚物体的主体价值是不是全在文字上（按合规去字后只剩一块纯色空框）。"""
+    return bool(_words(name) & TEXT_DEPENDENT_WORDS)
+
+
 def preflight(photo, workdir):
-    from PIL import Image as _I
-    _w, _h = _I.open(photo).size
+    # 尺寸也必须按 EXIF 摆正后再取：Orientation=6 的竖拍照片，原始像素是
+    # 3024x4032 记成 4032x3024，_size_px 会写反（短边不受影响，但报告会误导）。
+    _w, _h = open_photo(photo).size
     small = shrink(photo, os.path.join(workdir, "src_small.jpg"))
     txt = call_vision([small], PREFLIGHT_TASK)
     data = grab_json(txt)
@@ -357,6 +391,11 @@ def _norm(s):
 
 # 同类词库兜底：G0 漏标 similar_pairs 时，靠关键词把同族物品折叠成一枚。
 # 简化成扁平剪纸后，同族物品的轮廓几乎无法区分，并排放就是肉眼可见的重复。
+#
+# ⚠️ 这里折叠的不只是「同类物品」，还有【部件 ↔ 整体】关系。
+#    2026-08-30 · 06 银杏实拍：ginkgo tree / tree branch / tree trunk 三枚同时入选，
+#    三枚都是同一棵树的一部分，扁平剪纸下就是三块相似的褐色形状。
+#    过度折叠导致候选不足不是问题 —— select_objects 第 ④ 步的分层兜底会回填。
 SIMILAR_FAMILIES = [
     {"guitar", "bass", "ukulele"},
     {"drum", "snare", "tom", "kick"},
@@ -368,13 +407,25 @@ SIMILAR_FAMILIES = [
     {"lamp", "light", "lantern", "bulb"},
     {"phone", "smartphone", "camera"},
     {"chair", "stool", "seat", "bench"},
-    # 自然物：银杏叶 vs 叶簇 实拍中漏判过，补入
-    {"leaf", "leaves", "cluster", "foliage", "petal", "petals", "blossom", "flower"},
-    {"trunk", "branch", "twig", "bough"},
+    # 树体：整棵树与它的枝/干/树冠/叶簇是部件-整体关系，最多留 1 枚。
+    # （原来拆成 {leaf...} 和 {trunk, branch...} 两族，所以 tree+branch+trunk 全过）
+    {"tree", "trees", "treetop", "sapling", "trunk", "branch", "branches", "bough",
+     "boughs", "twig", "twigs", "limb", "canopy", "crown", "foliage",
+     "leaf", "leaves", "leafage", "cluster", "frond"},
+    # 花：花朵与花瓣/花蕊/花茎同样是部件-整体关系
+    {"flower", "flowers", "blossom", "blossoms", "bloom", "petal", "petals",
+     "stem", "stalk", "bud", "floret"},
+    # 建筑构件：屋顶/屋檐/墙面/立柱/横梁都是同一栋建筑的部件，
+    # 平涂剪纸后就是几块相似的大色块（03 故宫实拍多次出现两枚建筑构件）
+    {"roof", "rooftop", "eave", "eaves", "cornice", "gable", "ridge", "rafter",
+     "wall", "facade", "parapet", "pillar", "pillars", "column", "colonnade",
+     "beam", "balustrade"},
     {"stone", "brick", "block", "rock", "slab"},
     {"window", "lattice", "shutter", "pane"},
+    {"door", "doors", "gate", "gateway", "doorway", "archway"},
     {"bag", "backpack", "handbag", "tote", "purse"},
-    {"tent", "canopy", "umbrella", "parasol"},
+    # canopy 已归入树体族（树冠），这里只留真正的遮阳器具
+    {"tent", "umbrella", "parasol", "awning"},
 ]
 
 # 复合体拆解：整套装备天然由多根细杆支撑，画成贴纸必然卡在"结构过细 + 自带支架"，
@@ -401,6 +452,19 @@ def _decompose(name):
     return name, False
 
 
+def _singular(word):
+    """极简去复数。只在中心词本身没命中词库时兜底，所以不怕把 glass 削成 glas ——
+    那种情况根本走不到这里（glass 自己就在杯族里）。
+    实拍漏判：tree branches / stone slabs / petals 的中心词带 s，词库全是单数。"""
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith(("ches", "shes", "sses", "xes", "zes")):
+        return word[:-2]
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
 def _family(name):
     """
     用【中心词】判定所属物品族，而不是子串匹配。
@@ -413,9 +477,10 @@ def _family(name):
     if not words:
         return None
     head = words[-1]
-    for i, fam in enumerate(SIMILAR_FAMILIES):
-        if head in fam:
-            return i
+    for cand in (head, _singular(head)):
+        for i, fam in enumerate(SIMILAR_FAMILIES):
+            if cand in fam:
+                return i
     # 中心词没命中时，再用整名做一次严格的词组匹配（如 "hi hat"）
     full = _norm(name)
     for i, fam in enumerate(SIMILAR_FAMILIES):
@@ -490,10 +555,19 @@ def select_objects(info, n_obj):
                 explicit.add(_norm(loser))
                 dropped.append("%s（与同族物品轮廓雷同）" % loser)
 
-    # ③ 纪念物优先：keepsake 提到队首，确保不被 n_obj 截断
+    # ③ 排序：纪念物置顶 → 普通物品 → 「去字后只剩空色块」的低价值件垫底。
+    #    垫底而不是删除：有更好的候选就轮不到它们；候选不够时它们仍是兜底来源。
+    #    低价值判定优先于纪念物判定 —— G0 有时会把匾额/横幅标成纪念物，
+    #    但合规要求必须去字，去完还是一块空色块，所以以「去字后还剩什么」为准。
     keep = [k for k in (_norm(_decompose(x)[0]) for x in info.get("keepsake_objects") or [])
             if k in seen]
-    objs.sort(key=lambda o: (0 if _norm(o) in keep else 1))
+
+    def _rank(o):
+        if _text_dependent(o):
+            return 2
+        return 0 if _norm(o) in keep else 1
+
+    objs.sort(key=_rank)
 
     picked, used_fam = [], set()
     for o in objs:
@@ -526,6 +600,12 @@ def select_objects(info, n_obj):
                 picked.append(o)
                 if len(picked) >= n_obj:
                     break
+    # 把「降权后没被选上」的低价值件如实记进日志，方便复盘为什么没有它
+    _pick = {_norm(o) for o in picked}
+    for o in objs:
+        if _text_dependent(o) and _norm(o) not in _pick:
+            dropped.append("%s（主体价值依赖文字，按合规去字后只剩一块纯色空框，"
+                           "已降权，仅在候选不足时才启用）" % o)
     return picked, dropped
 
 
@@ -640,8 +720,12 @@ def do_relayout(png, outdir, tag, gap, margin, dpi):
     meta = {}
     if os.path.exists(meta_p):
         try:
-            meta = json.load(open(meta_p))
-        except Exception:
+            with open(meta_p, encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception as e:
+            # 不静默：重排图本身是好的，但报告里会缺邻距/边距实测值，要让人看见
+            log("  ⚠️ 重排元数据 %s 读不出来（%s），报告中该轮实测值将缺失"
+                % (os.path.basename(meta_p), e))
             meta = {}
     return dst, meta, log_txt
 
@@ -704,6 +788,37 @@ FIGRULE_COLLAGE = ("人物是否【完全无脸】（无眼睛/眉毛/嘴/鼻子
                    "只要出现任何五官就是 false。"
                    "注意：人物有皮肤色块、有衣服颜色、由多块平涂色纸拼成，都是【正确】的，不要因此判 false")
 
+
+def count_fails(d, n, n_obj, n_ppl):
+    """
+    枚数硬门禁。单独抽成函数是为了能离线回归测试（不花生图钱）。
+
+    d = 目视质检返回的 JSON；n = 目标总枚数；n_obj = 纯物品枚数；n_ppl = 含人物枚数。
+
+    历史缺陷（2026-08-30 · 02 演出现场实拍）：qc_visual 只判 `n_object_only >= n_obj`，
+    模型漏画人物那一枚时总数只有 5 枚，而 5 >= 5 成立，于是判「双重质检全过」
+    并直接交付了 5 枚的成品。少一枚是客户一眼能看出来的硬伤，必须是硬门禁。
+
+    两种构成都要能过：有人的照片 = n_obj 物品 + 1 人物；无人的照片 = n 枚全物品
+    （03 故宫就是纯物品 6 枚，合规，不能误拦）。
+    """
+    fails = []
+    comp = ("%d 枚纯物品 + %d 枚含人物" % (n_obj, n_ppl) if n_ppl
+            else "%d 枚纯物品（这张照片没有人，不允许出现人物）" % n_obj)
+    tot = d.get("n_elements")
+    if not isinstance(tot, int):
+        fails.append("目视质检没给出总枚数（n_elements=%r），无法确认成品是 %d 枚 —— "
+                     "按不合格处理：枚数未经确认的稿件不允许交付" % (tot, n))
+    elif tot != n:
+        fails.append("整版共 %d 枚独立元素，不等于目标 %d 枚（应为 %s）—— "
+                     "必须重画成刚好 %d 枚：缺的补齐，多的合并或去掉"
+                     % (tot, n, comp, n))
+    if n_ppl > 0 and isinstance(d.get("n_with_people"), int) and d["n_with_people"] < 1:
+        fails.append("照片里有人，但一枚含人物的元素都没有（应为 %s）—— "
+                     "缺的正是人物那一枚，必须补画" % comp)
+    return fails
+
+
 def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expected=None):
     expected = expected or []
     small = shrink(png, os.path.join(workdir, "qc%s.jpg" % tag), box=1400)
@@ -715,6 +830,13 @@ def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expe
                "这张照片原本没有人，因此画面中不允许出现任何人物、剪影或人体部位。"})
     d = grab_json(txt) or {}
     fails = []
+    # 拿不到 JSON 绝不能当「没发现问题」：早期实现里 d={} 会让下面所有判定
+    # 全部跳过，结果是视觉模型一抽风就直接判「全过」并交付。
+    if not d:
+        fails.append("目视质检没有返回可解析的 JSON（视觉模型响应异常），本轮判定无效 —— "
+                     "按不合格处理并重试")
+    else:
+        fails += count_fails(d, n, n_obj, n_ppl)
     if d.get("n_object_only") is not None and d["n_object_only"] < n_obj:
         fails.append("纯物品贴纸仅 %d 枚，少于要求的 %d 枚 —— 元素过于单一，缺少可自由搭配的装饰件。"
                      "必须把其中几枚改成【单个物品、无人、无场景】的独立贴纸"
@@ -722,13 +844,16 @@ def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expe
     if n_ppl == 0 and (d.get("invented_people") or (d.get("n_with_people") or 0) > 0):
         fails.append("原照片没有人，但画面中凭空生成了人物/剪影 —— 必须全部替换为物品或建筑细节元素")
     if n_ppl > 0 and d.get("figures_ok") is False:
+        # figures_note 经常是空串，直接拼进去会得到「不合格：。」这种句子，
+        # 而这些文案是原样喂回模型当重试指令的，标点错乱会稀释指令
+        _note = str(d.get("figures_note") or "").strip() or "视觉模型未说明具体位置"
         if figure_style == "silhouette":
             fails.append("人物剪影不合格：%s。人物必须是单一深色不透明无脸剪影，禁止任何肤色和五官"
-                         % d.get("figures_note", ""))
+                         % _note)
         else:
             fails.append("人物出现了五官：%s。人物的脸必须是一整块平涂的无五官色块 —— "
                          "去掉眼睛、眉毛、嘴、鼻子、眼镜，但保留皮肤色块和衣服配色"
-                         % d.get("figures_note", ""))
+                         % _note)
     if d.get("black_outline"): fails.append("出现黑色描边，必须完全去掉黑色勾线")
     ar = d.get("accent_ratio_pct")
     if isinstance(ar, int) and ar > 15:
@@ -737,7 +862,8 @@ def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expe
         fails.append("剪纸边缘不是暖白而是纯白 —— 必须是可见的米白/奶油白，否则印厂会当留白去掉")
     if d.get("matte_paper") is False: fails.append("质感偏光面/3D/渐变，必须回到哑光水粉纸感")
     if d.get("readable_text_or_logo"):
-        fails.append("仍有可读文字或品牌标识（%s），必须全部替换为纯色块" % d.get("text_note", ""))
+        fails.append("仍有可读文字或品牌标识（%s），必须全部替换为纯色块"
+                     % (str(d.get("text_note") or "").strip() or "视觉模型未写明内容"))
     if d.get("scenery_inside_object_stickers"):
         fails.append("纯物品贴纸里混进了背景场景，物品贴纸必须只有物品本体")
     if d.get("thin_parts"):
@@ -832,7 +958,13 @@ def main():
     n_obj, n_ppl = plan_mix(info, a.elements)
 
     picked, dropped = select_objects(info, n_obj)
+    # ⚠️ 必须按【真正入选的枚数】重算配比：build_prompt 内部就是按 len(picked) 写
+    #    prompt 的（n_ppl = n - len(picked)）。选品兜底后 picked 可能不等于 n_obj，
+    #    不重算的话质检会拿着「5 物品 + 1 人物」去校验一张实际是「4 物品 + 2 人物」
+    #    的版面，枚数门禁跟着一起错。
+    n_obj, n_ppl = len(picked), a.elements - len(picked)
     log("  ▸ 本版选中 : %s" % ", ".join(picked))
+    log("  ▸ 版面构成 : %d 枚纯物品 + %d 枚含人物 = %d 枚" % (n_obj, n_ppl, a.elements))
     if info.get("keepsake_objects"):
         log("  ▸ 纪念物   : %s（强制保留，不得省略）" % ", ".join(info["keepsake_objects"]))
     for dp in dropped:
@@ -843,7 +975,8 @@ def main():
     ok, blocks, warns = g0_gate(info, a.elements)
     for w in warns: log("  🟡 %s" % w)
     for b in blocks: log("  🔴 %s" % b)
-    json.dump(info, open(os.path.join(a.outdir, "preflight.json"), "w"), ensure_ascii=False, indent=2)
+    with open(os.path.join(a.outdir, "preflight.json"), "w", encoding="utf-8") as f:
+        json.dump(info, f, ensure_ascii=False, indent=2)
     if not ok:
         log("\n❌ G0 拒稿：不建议接这张照片。（未消耗任何生成额度）")
         return 1
@@ -858,7 +991,9 @@ def main():
             % (rnd, "" if a.no_relayout else "程序化重排 → "))
         prompt = build_prompt(info, a.elements, patches, a.figure_style,
                               [e.strip() for e in a.exclude.split(';') if e.strip()] if a.exclude else None)
-        open(os.path.join(a.outdir, "prompt_round%d.txt" % rnd), "w").write(prompt)
+        with open(os.path.join(a.outdir, "prompt_round%d.txt" % rnd), "w",
+                  encoding="utf-8") as f:
+            f.write(prompt)
         png = generate(small, prompt, a.outdir, str(rnd))
         log("  出图 : %s" % os.path.basename(png))
 
@@ -893,12 +1028,21 @@ def main():
         if not fails:
             log("  ✅ 双重质检全过")
             final = os.path.join(a.outdir, "FINAL.png"); shutil.copy(sheet, final)
-            subprocess.run([sys.executable, DOCTOR, os.path.abspath(final), "--sheet-width",
-                            str(SHEET_WIDTH_MM), "--outdir", os.path.abspath(os.path.join(a.outdir, "production"))],
-                           capture_output=True, text=True, cwd=os.path.dirname(DOCTOR))
+            prod = os.path.join(a.outdir, "production")
+            rp2 = subprocess.run([sys.executable, DOCTOR, os.path.abspath(final),
+                                  "--sheet-width", str(SHEET_WIDTH_MM),
+                                  "--outdir", os.path.abspath(prod)],
+                                 capture_output=True, text=True, cwd=os.path.dirname(DOCTOR))
             write_report(a.outdir, info, history, rnd, True)
             log("\n🎉 交付：%s（第 %d 轮通过）" % (final, rnd))
-            log("   生产文件：%s/production/cutline.svg" % a.outdir)
+            # 这一步以前不看返回码：刀线导出失败时照样打印「生产文件：cutline.svg」，
+            # 直到把不存在的文件发给工厂才发现。现在失败就明说。
+            cut = os.path.join(prod, "cutline.svg")
+            if os.path.isfile(cut):
+                log("   生产文件：%s" % cut)
+            else:
+                log("   🔴 刀线导出失败（doctor 退出码 %s），生产文件未生成，先别送厂：\n%s"
+                    % (rp2.returncode, (rp2.stdout + rp2.stderr)[-500:]))
             log("   凑满 4 单后拼 A3：python3 ../print-ready-doctor/impose_a3.py "
                 "单1/FINAL.png 单2/FINAL.png 单3/FINAL.png 单4/FINAL.png --outdir a3_out/")
             return 0
@@ -944,7 +1088,8 @@ def write_report(outdir, info, history, rounds, passed):
         else:
             L.append("- ✅ 双重质检全过")
         L.append("")
-    open(os.path.join(outdir, "qc_report.md"), "w").write("\n".join(L))
+    with open(os.path.join(outdir, "qc_report.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(L))
 
 if __name__ == "__main__":
     sys.exit(main())

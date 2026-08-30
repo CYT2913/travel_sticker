@@ -74,10 +74,35 @@ SCENE_RATIO = 0.545             # 场景图占可用宽度的比例
 GRAB_DILATE_MM = 0.35
 GRAB_FEATHER_PX = 1.6
 MIN_ELEM_AREA_MM2 = 120.0
+# A5 贴纸成品版的物理宽度。原来 148.0 直接写死在两处除法里，
+# 改一处漏一处就会让右栏贴纸整体缩放算错，抽成常量。
+STICKER_SHEET_WIDTH_MM = 148.0
 
 
 def log(m):
     print(m, flush=True)
+
+
+def imread_rgb(path, what):
+    """
+    读一张图并转成 RGB。
+
+    为什么不直接用 cv2.imread：
+      1. cv2.imread 走的是 C 库的 fopen，在 Windows 上遇到【中文路径】会直接
+         返回 None（本项目的交付目录、文件名几乎全是中文，如 交付_20260828/06_银杏）。
+         改成 np.fromfile + imdecode 后路径由 Python 打开，中文路径不再有问题。
+      2. 原来三个调用点里有一个没判 None，会在下一行 cvtColor 抛一句看不懂的
+         cv2.error，而真实原因只是路径写错。
+    """
+    try:
+        buf = np.fromfile(path, dtype=np.uint8)
+    except OSError as e:
+        raise SystemExit("❌ 读不到%s：%s（%s）" % (what, path, e))
+    img = cv2.imdecode(buf, cv2.IMREAD_COLOR) if buf.size else None
+    if img is None:
+        raise SystemExit("❌ 读不到%s：%s（文件不存在、为空，或不是 OpenCV 认识的图片格式）"
+                         % (what, path))
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
 # ── 手撕纸边缘 ─────────────────────────────────────────────────────────────
@@ -251,10 +276,7 @@ def build_card(scene_path, sheet_path, caption, w_mm, h_mm, dpi,
     area_w, area_h = W - 2 * m, H - 2 * m - cap_h
 
     # ① 主视觉场景：贴在一张手撕白纸上，再压一层软阴影
-    scene = cv2.imread(scene_path, cv2.IMREAD_COLOR)
-    if scene is None:
-        raise SystemExit("❌ 读不到场景图：%s" % scene_path)
-    scene = cv2.cvtColor(scene, cv2.COLOR_BGR2RGB)
+    scene = imread_rgb(scene_path, "场景图")
     fb = mm2px(FRAME_BORDER_MM, ppmm)
     box_w = int(area_w * SCENE_RATIO)
     box_h = area_h
@@ -278,11 +300,8 @@ def build_card(scene_path, sheet_path, caption, w_mm, h_mm, dpi,
     paste_rgba(canvas, plate, sheet_mask, m, m, ppmm)
 
     # ② 右栏贴纸样：就是 A5 成品里的那几枚本体
-    sheet = cv2.imread(sheet_path, cv2.IMREAD_COLOR)
-    if sheet is None:
-        raise SystemExit("❌ 读不到贴纸成品图：%s" % sheet_path)
-    sheet = cv2.cvtColor(sheet, cv2.COLOR_BGR2RGB)
-    sheet_ppmm = sheet.shape[1] / 148.0          # A5 竖版成品宽 148mm
+    sheet = imread_rgb(sheet_path, "贴纸成品图")
+    sheet_ppmm = sheet.shape[1] / STICKER_SHEET_WIDTH_MM   # A5 竖版成品宽 148mm
     elems = grab_elements(sheet, sheet_ppmm)
     log("· 贴纸成品里检出 %d 枚元素" % len(elems))
 
@@ -387,8 +406,8 @@ def main():
     parse = lambda s: {int(x) for x in s.replace("，", ",").split(",") if x.strip().isdigit()}
 
     if args.preview_only:
-        sheet = cv2.cvtColor(cv2.imread(args.stickers, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-        elems = grab_elements(sheet, sheet.shape[1] / 148.0)
+        sheet = imread_rgb(args.stickers, "贴纸成品图")
+        elems = grab_elements(sheet, sheet.shape[1] / STICKER_SHEET_WIDTH_MM)
         p = os.path.join(args.outdir, "卡纸_元素编号预览.png")
         preview_index(elems, p)
         log("✅ 预览：%s（共 %d 枚）" % (p, len(elems)))
@@ -417,7 +436,7 @@ def main():
     log("✅ PDF：%s.pdf" % base)
 
     preview_index(elems, os.path.join(args.outdir, "卡纸_元素编号预览.png"))
-    with open(os.path.join(args.outdir, "卡纸说明.txt"), "w") as f:
+    with open(os.path.join(args.outdir, "卡纸说明.txt"), "w", encoding="utf-8") as f:
         f.write("成品尺寸：%.0f × %.0f mm\n分辨率：%d dpi\n出血：%g mm\n"
                 "上卡元素编号：%s（共检出 %d 枚）\n标题：%s\n"
                 % (args.width, args.height, args.dpi, args.bleed,

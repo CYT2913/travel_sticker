@@ -53,7 +53,7 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 
 from print_ready_doctor import (segment_artwork, raw_artwork_mask, solve_offset,
-                                mm2px, disk)
+                                mm2px, disk, open_photo)
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -438,7 +438,7 @@ def main():
 
     slots = [None, None, None, None]
     for i, path in enumerate(args.sheets):
-        img = np.array(Image.open(path).convert("RGB"))
+        img = np.array(open_photo(path).convert("RGB"))
         pl = plan_placement(img, args.in_width, args.min_safe, args.min_area)
         tw = max(1, int(round(pl["w_mm"] * pl["s"] * ppmm)))
         th = max(1, int(round(pl["h_mm"] * pl["s"] * ppmm)))
@@ -486,12 +486,12 @@ def main():
 
     # ---- SVG
     svg = build_svg(kiss_all, cells, args, "A3_print.png", args.bleed)
-    with open(os.path.join(args.outdir, "A3_production.svg"), "w") as f:
+    with open(os.path.join(args.outdir, "A3_production.svg"), "w", encoding="utf-8") as f:
         f.write(svg)
     if not args.no_embedded:
         with open(os.path.join(args.outdir, "A3_print.png"), "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
-        with open(os.path.join(args.outdir, "A3_production_embedded.svg"), "w") as f:
+        with open(os.path.join(args.outdir, "A3_production_embedded.svg"), "w", encoding="utf-8") as f:
             f.write(build_svg(kiss_all, cells, args, "data:image/png;base64," + b64, args.bleed))
 
     # ---- 预览
@@ -505,7 +505,7 @@ def main():
     note = FACTORY_NOTE.format(date=datetime.now().strftime("%Y-%m-%d"), dpi=args.dpi,
                                margin=min(margins) if margins else args.min_safe,
                                minsafe=args.min_safe)
-    with open(os.path.join(args.outdir, "厂家须知.txt"), "w") as f:
+    with open(os.path.join(args.outdir, "厂家须知.txt"), "w", encoding="utf-8") as f:
         f.write(note)
 
     # ---- 报告
@@ -556,7 +556,7 @@ def main():
           "中间没有任何坐标系变换，所以位图和矢量不可能错位。",
           "可在 `A3_preview.png` 上目视复核：洋红线应恰好套在每枚贴纸外一圈。",
           "", "## 给工厂的下单说明（全文见 厂家须知.txt）", "", "```", note.strip(), "```", ""]
-    with open(os.path.join(args.outdir, "imposition_report.md"), "w") as f:
+    with open(os.path.join(args.outdir, "imposition_report.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(L))
 
     files = ["A3_print.png", "A3_production.svg"] + \

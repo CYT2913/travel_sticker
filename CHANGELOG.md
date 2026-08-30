@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-08-30 · 技术债集中清理：EXIF 方向 / 总枚数门禁 / 同族词库 / 空色块选品 · v3.3.3
+
+不加新功能，只修四个已确认缺陷。本轮**未跑生图**，全部是代码修复 + 离线回归测试。
+
+**1 · 读图不做 EXIF 旋转（回归缺陷，最高优先级）**
+
+现象：源照片 EXIF `Orientation=6`（手机竖拍）时，产线按原始像素读图，生成的场景图整幅横躺。所有自动检查（dpi / 邻距 / 枚数 / 刀线）全部通过，只有肉眼能发现 —— 属「自动检查全过、成品不能用」那一类。
+
+- `memory-sticker-forge/forge.py` 新增 `open_photo(path)` = `ImageOps.exif_transpose(Image.open(path))`，作为读图的唯一入口
+- `shrink()` 与 `preflight()` 改走 `open_photo`。用户原图的读取全链路只有这两处：`forge_scene.py` / `probe_capacity.py` / `forge_a3.py` 都是调 `forge.shrink` / `forge.preflight`，一处修复即全线生效
+- `print-ready-doctor/` 复查后确认**没有**读用户原图的地方（读的都是产线自己生成的 PNG）。但它们的图片路径来自命令行，仍可能被手工喂入手机原图，故 `print_ready_doctor.py` 也提供同名 `open_photo()`（对无 EXIF 的 PNG 是无操作），`relayout.py` / `impose_a3.py` 复用
+
+**2 · 目视质检缺「总枚数」硬门禁**
+
+现象：`qc_visual` 只判 `n_object_only >= n_obj`，模型漏画人物那一枚时总数只有 5，而 5 >= 5 成立 → 判「双重质检全过」并直接交付 5 枚成品。
+
+- 新增 `count_fails(d, n, n_obj, n_ppl)`（独立函数，可离线测），`qc_visual` 调用。三条门禁：总枚数必须严格等于目标；枚数缺失/非整数一律判不合格（未确认不许交付）；照片里有人时含人物元素不能为 0
+- 两种合法构成都能过：有人 = n_obj 物品 + 1 人物；无人 = 全物品（纯物品 6 枚不会被误拦）
+- 同时修掉：视觉模型返回不可解析 JSON 时，旧代码 `d={}` 会让所有判定静默跳过 → 直接判「全过」。现在判不合格并重试
+- 同时修掉：`main()` 里 `n_obj/n_ppl` 未按 `len(picked)` 重算，选品兜底后质检拿到的构成与 prompt 写的不一致
+
+**3 · 同族判定漏判部件-整体关系**
+
+现象：`ginkgo tree` / `tree branch` / `tree trunk` 三枚同时入选，都是同一棵树的部件，扁平剪纸下高度重复。
+
+- `SIMILAR_FAMILIES` 把原来的 `{leaf…}` 与 `{trunk, branch…}` 合并成一个**树体族**（tree/trunk/branch/bough/twig/limb/canopy/crown/foliage/leaf/leaves/cluster/frond）
+- 新增两组部件-整体族：**建筑构件**（roof/eave/cornice/gable/rafter/wall/facade/pillar/column/beam/balustrade）、**花**（flower/blossom/bloom/petal/stem/stalk/bud/floret）；新增 door/gate 族
+- `canopy` 移入树体族（树冠），遮阳器具族改为 `{tent, umbrella, parasol, awning}`
+- `_family()` 新增 `_singular()` 去复数兜底：中心词带 s（`tree branches` / `stone slabs` / `petals`）原先全部漏判
+- 分层兜底未动：折叠后候选不足时照旧回填
+
+**4 · 选品会选中「去字后只剩空色块」的物件**
+
+现象：匾额 / 展板 / 告示牌这类东西，主体价值就是那行字；合规要求必须去掉所有可读文字，去完只剩一块纯色空框，单独做贴纸价值极低。
+
+- 新增 `TEXT_DEPENDENT_WORDS` + `_text_dependent()`
+- `select_objects()` 排序由两档改三档：**纪念物 → 普通物品 → 低价值空色块件**。只降权不硬删，候选不足时仍可回填（回填时排最后）—— 缺一枚比一枚空框更糟
+- 低价值判定**优先于**纪念物判定：G0 有时把匾额标成纪念物，但去字后仍是空框
+- `banner` 从 `KEEPSAKE_WORDS` 移入 `TEXT_DEPENDENT_WORDS`
+- 被降权且没入选的物件写进 `dropped` 日志，复盘时能看到原因
+
+**顺手修掉的隐患**
+
+- `print_ready_doctor.py`：分割出 0 枚元素时后续 `min(...)` 抛 `ValueError: min() arg is an empty sequence`，看不出根因 → 提前判空 + 明确报错 + 退出码 2
+- `make_memory_card.py`：三处 `cv2.imread` 改 `imread_rgb()`（`np.fromfile` + `imdecode`）。`cv2.imread` 在 Windows 上遇非 ASCII 路径直接返回 `None`，而本项目输出目录名多为中文；且 `--preview-only` 分支原本没判 `None`，会在下一行抛看不懂的 `cv2.error`
+- `make_memory_card.py`：贴纸版宽度 `148.0` 原写死在两处除法里 → 抽成 `STICKER_SHEET_WIDTH_MM`
+- `forge.py`：交付时调 doctor 导出刀线不看返回码，失败也照样打印「生产文件：cutline.svg」 → 改为校验文件确实生成，否则明确报错
+- `forge.py`：`do_relayout` 里 `except Exception: meta = {}` 静默吞掉解析失败 → 改为打印警告
+- `forge.py`：`figures_note` / `text_note` 为空时拼出「人物剪影不合格：。」这类标点错乱，而这些文案会原样喂回模型当重试指令 → 空值兜底
+- `providers.py`：分辨率门禁前 `except Exception: return out_png` 会静默跳过门禁 → 改为打印警告
+- 所有含中文的落盘统一显式 `encoding="utf-8"`（`preflight.json` / `prompt_round*.txt` / `qc_report.md` / `scene_prompt.txt` / `report.md` / `cutline*.svg` / `厂家须知.txt` / `卡纸说明.txt`）。非 UTF-8 locale 的机器上原本会直接 `UnicodeEncodeError`
+
+**存疑未改**：`grab_elements()` 分行排序里写死的 6（改动会影响元素编号顺序）；卡纸 `MIN_ELEM_AREA_MM2=120` 与 doctor `--min-area 25` 两套阈值；`board` / `screen` 会顺带命中案板、屏风这类本身有价值的物件（词级匹配无法区分，且只降权不删除）。
+
+**测试**：`tests/` 由 11 项扩到 **29 项，全绿**
+
+- 新增 `tests/test_photo_io_and_counts.py`（12 项）：EXIF 方向（造一张 `Orientation=6` 的临时 JPEG，覆盖 `forge.open_photo` / `shrink` / 无 EXIF 无操作 / 印前侧 `print_ready_doctor.open_photo`）+ 枚数门禁六种情形
+- `tests/test_select_objects.py` 11 → 17 项：树体三部件同族、选品后只剩 1 枚树体件、建筑/花部件族、低价值件降权 / 兜底回填 / 压过纪念物标注
+- 测试 import 路径支持 `FORGE_DIR` 覆盖，便于同一套断言测多份副本
+
+**变更文件**：`memory-sticker-forge/forge.py`、`memory-sticker-forge/forge_scene.py`、`memory-sticker-forge/providers.py`、`print-ready-doctor/print_ready_doctor.py`、`print-ready-doctor/relayout.py`、`print-ready-doctor/impose_a3.py`、`print-ready-doctor/make_memory_card.py`、`tests/`、`CONTEXT.md`、`ASSUMPTIONS.md`
+
+---
+
 ## 2026-08-30 · 新增 COLOR_SPREAD 跨枚色彩分布约束 · v3.3.2
 
 **做了什么**

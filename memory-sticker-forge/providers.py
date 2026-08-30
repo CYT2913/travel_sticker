@@ -355,7 +355,13 @@ def generate_image(photo_path, prompt, out_png):
     try:
         from PIL import Image
         w, h = Image.open(out_png).size
-    except Exception:
+    except Exception as e:
+        # 不能静默放过：这道分辨率门禁挡的是「所有自动检查都过、实物却糊掉」
+        # 的唯一一类失败（详见文件头「分辨率陷阱」）。读不到尺寸时至少要吼一声，
+        # 否则门禁形同关闭而没人知道。
+        print("⚠️ 无法读取 %s 的尺寸（%s），本次跳过分辨率门禁 —— "
+              "请手动确认短边 ≥ %dpx" % (out_png, e, MIN_SHORT_EDGE_PX),
+              file=sys.stderr)
         return out_png
 
     if min(w, h) < MIN_SHORT_EDGE_PX:

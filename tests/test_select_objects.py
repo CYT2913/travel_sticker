@@ -15,8 +15,11 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "..", "memory-sticker-forge"))
+# 默认测同目录旁边的那份 forge.py；用 FORGE_DIR 可以指向另一份副本
+# （内部运行版 / 公开副本），同一套断言能把两边都锁住。
+sys.path.insert(0, os.environ.get(
+    "FORGE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "..", "memory-sticker-forge")))
 import forge  # noqa: E402
 
 
@@ -170,6 +173,89 @@ def test_prompt_contains_hard_rules():
     prompt = forge.build_prompt(info, 6)
     for rule in ("DRAW EVERY LISTED OBJECT", "NO DUPLICATES", "MUST KEEP"):
         assert rule in prompt, "prompt 缺少硬约束：%s" % rule
+
+
+# ── 9. 树体部件不得凑成一版（缺陷 3 · 2026-08-30 · 06 银杏）─────────────────
+def test_tree_parts_are_one_family():
+    """ginkgo tree / tree branch / tree trunk 是同一棵树的三个部件，
+    折叠后只能留 1 枚。整体与部件的关系必须算同族。"""
+    fam = forge._family("ginkgo tree")
+    assert fam is not None, "tree 必须落在某个族里"
+    for n in ("tree branch", "tree trunk", "tree bough", "leaf cluster",
+              "golden foliage", "ginkgo leaf", "tree canopy", "tree branches"):
+        assert forge._family(n) == fam, "%s 应与 tree 同族" % n
+
+
+def test_tree_parts_folded_in_selection():
+    """候选够用时，一版里最多只出现 1 枚树体部件。"""
+    info = {
+        "standalone_objects": ["ginkgo tree", "tree branch", "tree trunk",
+                               "stone bench", "bicycle", "red lantern", "wooden gate"],
+        "keepsake_objects": [], "container_pairs": [], "similar_pairs": [],
+    }
+    picked, dropped = forge.select_objects(info, 5)
+    assert len(picked) == 5, "枚数不足：%s" % picked
+    tree = [p for p in picked if forge._family(p) == forge._family("ginkgo tree")]
+    assert len(tree) == 1, "树体部件仍然重复入选：%s" % picked
+    assert any("trunk" in d or "branch" in d for d in dropped), "剔除理由应被记录"
+
+
+def test_part_whole_families_cover_building_and_flower():
+    """顺手补的两组部件-整体关系：建筑构件、花。"""
+    roof = forge._family("tiled roof")
+    for n in ("carved eave", "brick wall", "stone pillar", "wooden column"):
+        assert forge._family(n) == roof, "%s 应与 roof 同族" % n
+    flower = forge._family("flower")
+    for n in ("rose petal", "flower stem", "peach blossom", "petals"):
+        assert forge._family(n) == flower, "%s 应与 flower 同族" % n
+    # 别过度折叠：不同大类之间必须仍然可区分
+    assert forge._family("tiled roof") != forge._family("ginkgo tree")
+    assert forge._family("lattice window") != forge._family("tiled roof")
+    assert forge._family("stone lion") is None or \
+        forge._family("stone lion") != roof
+
+
+# ── 10. 去字后只剩空色块的东西要降权（缺陷 4 · 03/04/05 三单）─────────────
+def test_text_dependent_objects_deprioritized():
+    """匾额/展板/告示牌这类东西，主体价值就是那行字；合规要求必须去字，
+    去完只剩一块纯色空框。有更好的候选时不许选它们。"""
+    info = {
+        "standalone_objects": ["temple plaque", "stone lion", "red lantern",
+                               "bronze incense burner", "marble staircase",
+                               "copper water vat", "exhibition board", "notice sign"],
+        "keepsake_objects": [], "container_pairs": [], "similar_pairs": [],
+    }
+    picked, dropped = forge.select_objects(info, 5)
+    assert len(picked) == 5
+    for bad in ("temple plaque", "exhibition board", "notice sign"):
+        assert bad not in picked, "低价值空色块被选中了：%s" % picked
+    assert any("plaque" in d for d in dropped), "降权理由应被记录：%s" % dropped
+
+
+def test_text_dependent_still_available_as_last_resort():
+    """但不能硬删：候选实在不够时，一枚空色块也好过整版缺一枚。"""
+    info = {
+        "standalone_objects": ["temple plaque", "stone lion", "red lantern",
+                               "bronze incense burner", "marble staircase"],
+        "keepsake_objects": [], "container_pairs": [], "similar_pairs": [],
+    }
+    picked, _ = forge.select_objects(info, 5)
+    assert len(picked) == 5, "兜底失效，枚数不足：%s" % picked
+    assert "temple plaque" in picked, "候选不足时应回填低价值件：%s" % picked
+    assert forge._norm(picked[-1]) == "temple plaque", "低价值件必须排在最后：%s" % picked
+
+
+def test_text_dependent_beats_keepsake_hint():
+    """G0 有时把匾额标成纪念物。以「去字后还剩什么」为准，仍然降权。"""
+    info = {
+        "standalone_objects": ["temple plaque", "stone lion", "red lantern",
+                               "bronze incense burner", "marble staircase",
+                               "copper water vat"],
+        "keepsake_objects": ["temple plaque"],
+        "container_pairs": [], "similar_pairs": [],
+    }
+    picked, _ = forge.select_objects(info, 5)
+    assert "temple plaque" not in picked, "被标成纪念物也不该顶掉真物件：%s" % picked
 
 
 if __name__ == "__main__":

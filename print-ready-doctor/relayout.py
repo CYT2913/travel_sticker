@@ -52,7 +52,7 @@ import cv2
 from PIL import Image
 
 # 复用 doctor 里已校准过的分割逻辑，不另写一套
-from print_ready_doctor import segment_artwork, mm2px, disk
+from print_ready_doctor import segment_artwork, mm2px, disk, open_photo
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -300,7 +300,7 @@ def write_report(path, src, meta, ver):
               "最小邻距 %s mm" % ver["min_gap_mm"]]
     L += ["", "说明：邻距/边距为距离变换实测值，不是估计值。",
           "格子间本身就隔着 gap，元素又不出格，因此 邻距 ≥ gap 由几何强制成立。", ""]
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(L))
 
 
@@ -330,7 +330,7 @@ def main():
     a = ap.parse_args()
 
     os.makedirs(a.outdir, exist_ok=True)
-    img = np.array(Image.open(a.image).convert("RGB"))
+    img = np.array(open_photo(a.image).convert("RGB"))
     in_dpi = img.shape[1] / float(a.in_width) * 25.4
     print("[输入] %s  %dx%dpx  → 按 %.0fmm 宽换算，有效 %.0f dpi"
           % (os.path.basename(a.image), img.shape[1], img.shape[0], a.in_width, in_dpi))
@@ -355,7 +355,7 @@ def main():
         meta["verify"] = ver
 
     write_report(os.path.join(a.outdir, a.name + "_report.txt"), a.image, meta, ver)
-    with open(os.path.join(a.outdir, a.name + ".json"), "w") as f:
+    with open(os.path.join(a.outdir, a.name + ".json"), "w", encoding="utf-8") as f:
         json.dump({"source": os.path.abspath(a.image), **meta}, f,
                   ensure_ascii=False, indent=2)
     print("[输出] %s" % png)
