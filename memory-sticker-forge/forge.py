@@ -19,10 +19,20 @@ v1.4 关键改动：排版不再交给模型
     python3 forge.py <photo> [--outdir out] [--max-rounds 4] [--elements 6]
     python3 forge.py <photo> --preflight-only      # 只做 G0 体检，不生成（不花 token）
     python3 forge.py <photo> --no-relayout         # 关掉程序化重排（旧行为）
+    python3 forge.py <photo> --fresh               # 忽略断点，强制从 G0 重头跑
 
-退出码：0 = 交付合格稿；1 = G0 拒稿；2 = 达到重试上限仍不合格
+断点续跑（v3.5.0 · 2026-09-02）
+--------------------------------
+同一条命令重跑同一个 --outdir 时，默认【复用】已有产物，不重复烧额度：
+    · preflight.json 存在且有效 → 直接复用 G0，不再调用视觉模型
+    · roundN 的 prompt 与上次逐字节相同且产物在 → 复用生图/重排/质检结果
+复用了什么会在日志里逐条打印，并在收尾汇总，不会让人误以为是重新跑的。
+要强制从头跑用 --fresh（等价别名 --no-resume）。
+
+退出码：0 = 交付合格稿；1 = G0 拒稿；2 = 达到重试上限仍不合格；
+        3 = provider 自检/能力不达标；4 = provider 生图失败（已存断点，可续跑）
 """
-import argparse, json, os, re, shutil, subprocess, sys, tempfile, time
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import providers
@@ -127,8 +137,11 @@ JSON 字段：
                                           // 名称必须与 standalone_objects 里完全一致。没有则空数组
   "carried_items": ["..."],               // 【那天你带着的东西】随身物/消耗品/自然物：门票、票根、地图、水壶、背包、帽子、
                                           // 相机、鞋、伞、冰淇淋、饮料、食物、落叶、合影照片等。名称必须与 standalone_objects 一致
-  "standalone_objects": ["...","..."],    // 至少6个、最多8个【能单独抠出来做贴纸的实体物品】，按"纪念价值"从高到低排（不是按体量）。
+  "standalone_objects": ["...","..."],    // 至少10个、最多14个【能单独抠出来做贴纸的实体物品】，按"纪念价值"从高到低排（不是按体量）。
                                           // 必须是物品不是人；必须是画面里真实存在的；用英文，简短具体，如 "electric guitar","drum kit","birthday cake"
+                                          // ⚠️ 数量下限是硬要求，且必须【跨类别】：随身物（背包/外套/帽子/鞋/手机/水壶/门票/伞/食物）、
+                                          // 自然物（落叶/树/花/石头/草地）、建筑构件或现场设施（围墙/花格/栏杆/路灯/台阶/长椅/遮阳棚）
+                                          // 三类都要有。只给同一族的 6 项（例如全是树和墙）会导致后续选品无物可选。
   "composite_parts": [["A","B"]],         // 【复合物体拆解】清单里凡是「由多个可独立成立的部件组成」或「靠支架/细杆撑起来」的整体 A，
                                           // 给出其中最具代表性、体量最厚实、能单独成立的那一个部件 B。
                                           // 如 [["drum kit","bass drum"],["lego set","lego brick"],["gachapon machine","capsule toy"]]。
@@ -340,6 +353,41 @@ COMPOSITE_HEADS = {
 # ⚠️ 不要把 pile / stack / bunch / bundle 这类【集合量词】放进来（见 COLLECTIVE_HEADS）：
 #    "leaf pile" 的中心词虽是量词，但它不是成套装备，去掉量词会打乱同族判定。
 
+# ── G0 召回类别覆盖（2026-09-02 · v36 06 银杏事故）─────────────────────────
+# 事故经过：同一张银杏照片，G0 有一次只召回 6 项且全是树/墙同族，⭐随身物档
+# 只有 `ginkgo leaf` 一项；这一项一轮内撞上互斥规则被永久剔除后候选池当场见底，
+# 最终交付是「4 物品 + 2 人物、银杏叶缺席」—— 技术指标全过，产品完全不合格。
+# 根因不是选品逻辑，是 **G0 召回抖动**（第 3 次跑同一张照片时它给出了
+# backpack / jacket / sneakers）。
+#
+# 所以给召回加两条下限：数量 ≥ G0_MIN_OBJECTS，且横跨 ≥ G0_MIN_CATEGORIES 个类别。
+# 这两个词库只用于【判断召回够不够杂】，不参与选品排序，判错只会多问一次模型。
+NATURE_WORDS = {
+    "tree", "trees", "trunk", "trunks", "branch", "branches", "twig", "foliage",
+    "bush", "bushes", "shrub", "shrubs", "hedge", "grass", "lawn", "moss",
+    "plant", "plants", "bamboo", "pine", "maple", "ginkgo", "willow", "cherry",
+    "flower", "flowers", "blossom", "petal", "petals", "leaf", "leaves",
+    "stone", "rock", "boulder", "pebble", "sand", "soil", "water", "pond",
+    "lake", "river", "stream", "mountain", "hill", "cloud", "clouds", "sky",
+    "snow", "puddle", "root", "roots", "acorn", "pinecone", "feather", "shell",
+}
+# 建筑构件 / 现场设施：不区分古今（现代地标本体的剔除在选品层做，这里只数类别）
+FACILITY_WORDS = {
+    "wall", "walls", "lattice", "gate", "gateway", "door", "doorway", "window",
+    "railing", "fence", "balustrade", "roof", "tile", "tiles", "column",
+    "pillar", "arch", "archway", "step", "steps", "stair", "stairs",
+    "staircase", "bridge", "path", "pavement", "paving", "curb", "bollard",
+    "lamp", "lamppost", "lantern", "streetlight", "bench", "chair", "stool",
+    "kiosk", "booth", "canopy", "tent", "awning", "umbrella", "planter",
+    "pot", "bin", "statue", "sculpture", "monument", "pillar", "post",
+    "building", "house", "hall", "tower", "pagoda", "pavilion", "temple",
+    "gazebo", "stage", "platform", "barrier", "handrail", "grille", "screen",
+}
+G0_MIN_OBJECTS = 10        # 候选物品数下限：低于此值，撞一次互斥规则池子就可能见底
+G0_MIN_CATEGORIES = 3      # 类别覆盖下限：随身物 / 自然物 / 建筑设施 / 其它
+G0_MAX_ATTEMPTS = 3        # 单次 G0 调用的解析重试上限（缺陷 A）
+G0_RECALL_ATTEMPTS = 2     # 召回不足时最多再补问几次（缺陷 06 银杏）
+
 
 def _phrase_hit(name, phrases):
     """按词边界做整词组匹配（避免 "cutting board" 误命中 "board" 类判定）。"""
@@ -374,6 +422,36 @@ def _modern_landmark(name):
 def _carry_item(name):
     """⭐「那天你带着的东西」：随身物 / 消耗品 / 自然物 → 最高优先级档。"""
     return bool(_words(name) & CARRY_WORDS) or _phrase_hit(name, CARRY_PHRASES)
+
+
+def g0_category(name):
+    """把一个候选物品归到 G0 召回类别（只用于判断召回够不够杂，不参与选品排序）。
+
+    顺序有意为之：随身物优先（ginkgo leaf 既是叶子也是能捡起来带走的东西，
+    它对本产品的价值在「带走」这一面），其次自然物，再次建筑设施。
+    """
+    if _carry_item(name):
+        return "carry"
+    if _words(name) & NATURE_WORDS:
+        return "nature"
+    if (_words(name) & FACILITY_WORDS) or _ancient_arch(name) or _modern_landmark(name):
+        return "facility"
+    return "other"
+
+
+G0_CATEGORY_CN = {"carry": "随身物", "nature": "自然物",
+                  "facility": "建筑/设施", "other": "其它"}
+
+
+def g0_recall_report(objs):
+    """返回 (是否达标, 数量, 类别集合, 一句话说明)。"""
+    names = _strlist(objs)
+    cats = {g0_category(o) for o in names}
+    ok = len(names) >= G0_MIN_OBJECTS and len(cats) >= G0_MIN_CATEGORIES
+    desc = "%d 项 / %d 类（%s）" % (
+        len(names), len(cats),
+        "、".join(G0_CATEGORY_CN.get(c, c) for c in sorted(cats)) or "无")
+    return ok, len(names), cats, desc
 
 
 def _ip_reason(name):
@@ -427,10 +505,108 @@ def preflight(photo, workdir):
     # 3024x4032 记成 4032x3024，_size_px 会写反（短边不受影响，但报告会误导）。
     _w, _h = open_photo(photo).size
     small = shrink(photo, os.path.join(workdir, "src_small.jpg"))
-    txt = call_vision([small], PREFLIGHT_TASK)
-    data = grab_json(txt)
-    if not data:
-        raise SystemExit("❌ 场景解析失败，视觉模型未返回可解析 JSON：\n" + txt[:600])
+    data = _g0_ask_with_retry(small)
+    data = _g0_normalize(data)
+    data = _g0_fill_recall(data, small)
+    # 保险：模型仍可能把主体物品误填进 thin_parts，导致该物品被整个省略。
+    # 凡是同时出现在 standalone_objects 里的，一律从 thin_parts 剔除。
+    _objs = {str(o).strip().lower() for o in data["standalone_objects"]}
+    _kept, _rescued = [], []
+    for t in data["thin_parts"]:
+        if str(t).strip().lower() in _objs:
+            _rescued.append(t)
+        else:
+            _kept.append(t)
+    data["thin_parts"] = _kept
+    if _rescued:
+        data["_rescued_from_thin"] = _rescued
+    data["_short_edge_px"] = min(_w, _h)
+    data["_size_px"] = "%dx%d" % (_w, _h)
+    return data, small
+
+
+# ── 缺陷 A（2026-09-02）：G0 返回截断 JSON 时整单直接崩 ─────────────────────
+# 实测：v36 02 演出现场首跑，G0 返回的 JSON 在 `"mode` 处被截断，
+# `preflight()` 里一句 `raise SystemExit` 就把整单结束了 —— 没有任何重试，
+# 前面的自检、体检全部作废，人得手动重跑。
+#
+# 形状归一（_strlist / _pairs_from）挡的是「字段类型抖动」，挡不住「响应被砍断」：
+# 那时候连 JSON 都不完整，没有任何字段可归一。
+#
+# 修法：把「调用 + 解析」包成有限次重试（G0_MAX_ATTEMPTS 次），并且重试时
+# **改一下请求**而不是原样再问一遍 —— 原样重问对「输出长度超限」这个根因无效。
+# 追加提示要求：只输出 JSON、值写短、可选字段允许直接给 []。
+# 超过上限才失败，且报错必须明说是 G0 阶段失败（v36 那次报错看不出阶段）。
+G0_JSON_ONLY_HINT = """
+
+────────────────────────────────────────────────────────────
+⚠️ 重试提示（上一次的返回无法解析：被截断 / 不是 JSON / 空返回）
+────────────────────────────────────────────────────────────
+这一次请严格遵守，否则本单无法处理：
+1. **只输出一个 JSON 对象**：第一个字符是 `{`，最后一个字符是 `}`。
+   不要 markdown 代码块，不要任何解释文字、前言或结语。
+2. **把值写短**：每个字符串控制在 20 个字以内，不要在 JSON 里写注释。
+3. **宁可少写可选字段也必须保证 JSON 完整闭合**：
+   `composite_parts` / `similar_pairs` / `container_pairs` / `thin_parts`
+   如果不确定，直接给 `[]`。
+4. 必须给出的字段只有这些：`scene`、`lighting`、`people_count`、`has_minor`、
+   `ip_items`、`modern_landmark_items`、`carried_items`、`standalone_objects`、
+   `keepsake_objects`、`reject_reason`。
+"""
+
+
+def g0_parse_problem(txt, data):
+    """G0 返回不可用时给出【可恢复错误】的具体类型；可用时返回 None。
+
+    抽成独立函数是为了能离线回归测试（造一段截断 JSON 喂进来即可）。
+    """
+    s = txt if isinstance(txt, str) else ("" if txt is None else str(txt))
+    if not s.strip():
+        return "视觉模型返回空内容"
+    if data is None:
+        tail = s[-160:].replace("\n", " ")
+        if s.count("{") > s.count("}"):
+            return "JSON 未闭合（疑似被截断，%d 个 { 对 %d 个 }），末尾：…%s" % (
+                s.count("{"), s.count("}"), tail)
+        return "返回内容里找不到可解析的 JSON，末尾：…%s" % tail
+    if not isinstance(data, dict):
+        return "解析出来的不是 JSON 对象（是 %s）" % type(data).__name__
+    if not _strlist(data.get("standalone_objects")) and not data.get("reject_reason"):
+        return "JSON 可解析但 standalone_objects 为空且未给拒稿原因（疑似截断在字段中途）"
+    return None
+
+
+def _g0_ask_with_retry(small, extra_task="", stage="G0"):
+    """调一次 G0 并在【可恢复错误】上有限次重试。超上限抛 SystemExit。"""
+    problems, txt = [], ""
+    for attempt in range(1, G0_MAX_ATTEMPTS + 1):
+        task = PREFLIGHT_TASK + extra_task
+        if attempt > 1:
+            task += G0_JSON_ONLY_HINT
+        txt = call_vision([small], task)
+        data = grab_json(txt if isinstance(txt, str) else str(txt or ""))
+        problem = g0_parse_problem(txt, data)
+        if problem is None:
+            if attempt > 1:
+                log("  ✅ %s 第 %d 次调用解析成功（前 %d 次不可用，已重试）"
+                    % (stage, attempt, attempt - 1))
+            return data
+        problems.append(problem)
+        log("  🟡 %s 第 %d/%d 次调用返回不可用：%s"
+            % (stage, attempt, G0_MAX_ATTEMPTS, problem))
+        if attempt < G0_MAX_ATTEMPTS:
+            log("     ↻ 重试并要求模型只输出 JSON、缩短字段值")
+    raise SystemExit(
+        "❌ 【%s 阶段失败】视觉模型连续 %d 次未返回可解析 JSON，本单停止"
+        "（未消耗任何生图额度）。\n   逐次原因：\n%s\n"
+        "   最后一次原始返回（前 600 字）：\n%s"
+        % (stage, G0_MAX_ATTEMPTS,
+           "\n".join("     %d) %s" % (i + 1, p) for i, p in enumerate(problems)),
+           (txt if isinstance(txt, str) else str(txt or ""))[:600]))
+
+
+def _g0_normalize(data):
+    """G0 出口的字段清洗：null 兜底 → 形状归一 → 词库补全。"""
     # ⚠️ 不能用 setdefault：视觉模型经常把可选字段显式写成 null（实拍 run_regress
     #    的 keepsake_objects / container_pairs 全是 null），setdefault 只在「键不存在」
     #    时生效，null 会原样留下，后面 `for x in None` 直接把整套保护逻辑跳过。
@@ -458,21 +634,97 @@ def preflight(photo, workdir):
         data["standalone_objects"], data["container_pairs"])
     data["keepsake_objects"] = infer_keepsakes(
         data["standalone_objects"], data["keepsake_objects"])
-    # 保险：模型仍可能把主体物品误填进 thin_parts，导致该物品被整个省略。
-    # 凡是同时出现在 standalone_objects 里的，一律从 thin_parts 剔除。
-    _objs = {str(o).strip().lower() for o in data["standalone_objects"]}
-    _kept, _rescued = [], []
-    for t in data["thin_parts"]:
-        if str(t).strip().lower() in _objs:
-            _rescued.append(t)
-        else:
-            _kept.append(t)
-    data["thin_parts"] = _kept
-    if _rescued:
-        data["_rescued_from_thin"] = _rescued
-    data["_short_edge_px"] = min(_w, _h)
-    data["_size_px"] = "%dx%d" % (_w, _h)
-    return data, small
+    return data
+
+
+G0_RECALL_HINT = """
+
+────────────────────────────────────────────────────────────
+⚠️ 补充召回（上一次 standalone_objects 只给出 %d 项：%s）
+────────────────────────────────────────────────────────────
+候选太少或类别太单一，后续选品一旦撞上互斥规则就会无物可选，
+最终会漏掉这张照片的主角。请在保留上面已给出的物品的基础上，
+**再补充一些不同类别的物品，尤其是人物随身携带的东西**：
+· ⭐ 人物随身携带 / 身上穿戴的东西（最重要，请优先找）：背包、单肩包、手提袋、
+  外套、大衣、围巾、帽子、鞋、手机、相机、水壶、门票、地图、伞、
+  手里拿着的食物或饮料 —— 画面里只要看得见就写进来，并同时写进 carried_items；
+· 自然物：落叶、叶簇、树、花、草地、石头；
+· 建筑构件 / 现场设施：围墙、花格、栏杆、路灯、台阶、长椅、遮阳棚、指示柱。
+要求 `standalone_objects` **至少 %d 项**，且横跨【随身物 / 自然物 / 建筑或设施】
+三个类别（缺哪类补哪类，当前缺：%s）。
+仍然只输出一个 JSON 对象，不要解释文字。
+"""
+
+
+def _g0_merge(base, extra):
+    """把补问回来的 G0 结果并进已有结果：清单取并集（保序去重），标量保留首答。"""
+    for key in ("standalone_objects", "carried_items", "keepsake_objects",
+                "ip_items", "modern_landmark_items", "thin_parts"):
+        old = _strlist(base.get(key))
+        seen = {_norm(x) for x in old}
+        for x in _strlist(extra.get(key)):
+            if _norm(x) and _norm(x) not in seen:
+                seen.add(_norm(x))
+                old.append(x)
+        base[key] = old
+    for key in ("container_pairs", "similar_pairs"):
+        pairs = [p for p in (base.get(key) or [])
+                 if isinstance(p, (list, tuple)) and len(p) == 2]
+        have = {(_norm(p[0]), _norm(p[1])) for p in pairs}
+        for p in (extra.get(key) or []):
+            if isinstance(p, (list, tuple)) and len(p) == 2 and \
+                    (_norm(p[0]), _norm(p[1])) not in have:
+                have.add((_norm(p[0]), _norm(p[1])))
+                pairs.append([p[0], p[1]])
+        base[key] = pairs
+    # composite_parts 经 _g0_normalize 后一定是 [[整体, 单件]]，这里仍按 pairs 处理
+    cp_pairs = [p for p in (base.get("composite_parts") or [])
+                if isinstance(p, (list, tuple)) and len(p) == 2]
+    have_cp = {(_norm(p[0]), _norm(p[1])) for p in cp_pairs}
+    for p in (extra.get("composite_parts") or []):
+        if isinstance(p, (list, tuple)) and len(p) == 2 and \
+                (_norm(p[0]), _norm(p[1])) not in have_cp:
+            have_cp.add((_norm(p[0]), _norm(p[1])))
+            cp_pairs.append([p[0], p[1]])
+    base["composite_parts"] = cp_pairs
+    # 拒稿原因只要有一方给了就必须保留（补问时模型可能忘了写）
+    if not base.get("reject_reason") and extra.get("reject_reason"):
+        base["reject_reason"] = extra["reject_reason"]
+    return base
+
+
+def _g0_fill_recall(data, small):
+    """召回下限保证（06 银杏事故）：数量不足或类别单一时补问，仍不足只警告不阻断。"""
+    ok, n, cats, desc = g0_recall_report(data.get("standalone_objects"))
+    if ok:
+        log("  召回      : %s ✅ 达标（下限 %d 项 / %d 类）"
+            % (desc, G0_MIN_OBJECTS, G0_MIN_CATEGORIES))
+        return data
+    for attempt in range(1, G0_RECALL_ATTEMPTS + 1):
+        missing = [G0_CATEGORY_CN[c] for c in ("carry", "nature", "facility")
+                   if c not in cats]
+        log("  🟡 G0 召回不足：%s（下限 %d 项 / %d 类）→ 第 %d/%d 次补问"
+            % (desc, G0_MIN_OBJECTS, G0_MIN_CATEGORIES, attempt, G0_RECALL_ATTEMPTS))
+        hint = G0_RECALL_HINT % (n, ", ".join(_strlist(data.get("standalone_objects"))[:14]),
+                                 G0_MIN_OBJECTS, "、".join(missing) or "（类别够了，数量不够）")
+        try:
+            extra = _g0_normalize(_g0_ask_with_retry(small, hint, stage="G0 补充召回"))
+        except SystemExit as e:
+            # 补问失败不能把整单拖死：首答本身是可用的，退化成「候选池偏薄」继续跑
+            log("  🟡 补问失败（%s），沿用首次召回结果继续" % str(e)[:120])
+            break
+        before = n
+        data = _g0_merge(data, extra)
+        ok, n, cats, desc = g0_recall_report(data.get("standalone_objects"))
+        log("  ▸ 补问后召回 : %d → %s" % (before, desc))
+        if ok:
+            log("  召回      : %s ✅ 达标（经 %d 次补问）" % (desc, attempt))
+            return data
+    log("  🟡 G0 召回仍未达下限：%s —— 这张照片可能确实只有这些可拆元素。"
+        "继续跑，但候选池偏薄，撞互斥规则时更容易凑不满枚数（见 qc_report.md）" % desc)
+    data["_recall_warning"] = desc
+    return data
+
 
 MIN_SHORT_EDGE_PX = 1500   # PRD 18.3 的照片准入标准
 HARD_SHORT_EDGE_PX = 600   # 低于此值细节不足以拆出可辨识的独立元素
@@ -1098,6 +1350,18 @@ No white margin, no frame, no border, no caption, no numbering, no separate floa
 
 SCENE_NEGATIVE = """DO NOT: a sticker sheet, a grid of separate objects, isolated cut-outs on a white background, black outlines, black keylines, photorealism, 3D render, gloss, airbrush, neon glow, lens flare, bokeh, gradient mesh, facial features, readable text, watermarks, brand logos."""
 
+# v36 实跑暴露的缺陷：IP_POLICY 排在 SCENE_OUTPUT 之前，而 SCENE_OUTPUT 里写着
+# 「keep the setting … the same subject in the same place」，两段直接打架，
+# 后出现的那段赢 —— 05 鸟巢的场景图把受著作权保护的钢结构编织外立面原样画了出来。
+# 贴纸版没这个问题（它靠 select_objects() 在选品层就把地标硬剔了），场景图没有选品层，
+# 只能靠 prompt。所以把地标禁令挪到【最后】，并且点名替换方案，不留解释空间。
+SCENE_LANDMARK_OVERRIDE = """MODERN LANDMARK OVERRIDE - THIS RULE OUTRANKS EVERY "KEEP THE SETTING" INSTRUCTION ABOVE:
+The photograph contains a copyrighted modern landmark building: %s.
+You must NOT reproduce that building, not even in simplified, stylised, partial or background form.
+Specifically forbidden: its overall silhouette, its structural pattern, its lattice / woven / mesh / diagrid / exoskeleton facade, its curved shell, its distinctive roof profile - anything by which a viewer could name the building.
+Instead, rebuild the same place WITHOUT it: keep the open plaza or ground, the paving, the sky, the trees and shrubs, the street lamps, the plain white event canopies, the fence and the people, and let plain generic low trees or an ordinary treeline fill the space where the building used to be.
+An anonymous, unremarkable skyline is required. If in doubt, leave that area as empty sky."""
+
 
 def build_scene_prompt(info, figure_style="collage"):
     """主视觉场景图 prompt（模块 O1）。"""
@@ -1115,6 +1379,10 @@ def build_scene_prompt(info, figure_style="collage"):
     else:
         parts.append(NO_FIGURE)
     parts += [COMPLIANCE % ", ".join(ip), IP_POLICY, SCENE_OUTPUT, SCENE_NEGATIVE, STYLE_REMINDER]
+    # 地标禁令必须排在 SCENE_OUTPUT / STYLE_REMINDER 之后，否则会被「保持原场景」压过去
+    lm = _strlist(info.get("modern_landmark_items"))
+    if lm:
+        parts.append(SCENE_LANDMARK_OVERRIDE % ", ".join(lm))
     return "\n\n".join(parts)
 
 # ── 步骤 3：生成 ───────────────────────────────────────────────────────────
@@ -1568,6 +1836,140 @@ class ConvergenceGuard:
         return [f for f in fails if not objects_in_fail(f, evicted)]
 
 
+# ── 断点续跑（缺陷 B · 2026-09-02）──────────────────────────────────────────
+# 实测代价：v36 那一轮 01 生日跑了 5 次才成功，其中 2 次是 provider `400 Client Error`
+# 打断的 —— 每次都从 G0 重头开始，已经成功的 G0 调用和已经跑完的前几轮生图全部作废。
+# 一轮生图约 1 元 token + 数分钟，白烧的是真钱和真时间。
+#
+# 断点的粒度选「轮」而不是「单」：
+#   · G0 结果（preflight.json）—— 只要文件有效就复用，不再调视觉模型
+#   · 每一轮的生图 / 重排 / 双重质检结果 —— 以【该轮 prompt 的 sha256】为键，
+#     prompt 一个字节不同就必须重跑（prompt 变了产物就不再对应，复用即造假）
+#
+# 为什么不按「文件存在」就复用：round2.png 存在不代表它是当前这组元素画出来的。
+# ConvergenceGuard 换元素后 prompt 会变，那时候旧图必须作废。所以键是 prompt 摘要。
+RESUME_FILE = "resume_state.json"
+
+
+def prompt_sig(text):
+    """prompt 的内容摘要。取前 16 位十六进制，够用且日志里能看。"""
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:16]
+
+
+def load_resume(outdir):
+    """读断点。读不出来就当没有断点（宁可多跑一轮，不能拿坏数据当产物）。"""
+    p = os.path.join(outdir, RESUME_FILE)
+    if not os.path.isfile(p):
+        return {"rounds": {}}
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get("rounds"), dict):
+            return d
+    except Exception as e:
+        log("  🟡 断点文件 %s 读不出来（%s），本次按无断点处理" % (RESUME_FILE, e))
+    return {"rounds": {}}
+
+
+def save_resume(outdir, state):
+    p = os.path.join(outdir, RESUME_FILE)
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:                                  # 存不下也不该弄崩这一单
+        log("  🟡 断点写入失败（%s），续跑能力本次不可用" % e)
+
+
+def record_round(state, rnd, prompt, png, sheet, rmeta, q, v, outdir):
+    """把这一轮的产物与质检结论写进断点。路径一律存相对 outdir 的文件名。"""
+    q2 = {k: val for k, val in (q or {}).items() if k != "raw"}   # raw 是几十 KB 的报告全文
+    state.setdefault("rounds", {})[str(rnd)] = {
+        "prompt_sig": prompt_sig(prompt),
+        "png": os.path.basename(png) if png else None,
+        "sheet": os.path.basename(sheet) if sheet else None,
+        "relayout": rmeta or {},
+        "quant": q2,
+        "visual": v,
+    }
+    save_resume(outdir, state)
+    return state
+
+
+def round_cache(state, rnd, prompt, outdir):
+    """这一轮能不能直接复用？返回 (记录 or None, 说明)。
+
+    四个条件全部满足才复用：断点里有这一轮 / prompt 摘要一致 /
+    出图与重排图两个文件都还在 / 量化与目视结论都记全了。
+    任何一条不满足就重跑 —— 复用一个说不清来源的产物比多花一轮更糟。
+    """
+    rec = (state.get("rounds") or {}).get(str(rnd))
+    if not isinstance(rec, dict):
+        return None, "无断点记录"
+    if rec.get("prompt_sig") != prompt_sig(prompt):
+        return None, "prompt 已变化（换过元素或改过参数），旧产物作废"
+    for key in ("png", "sheet"):
+        name = rec.get(key)
+        if not name or not os.path.isfile(os.path.join(outdir, name)):
+            return None, "产物文件 %s 已不在" % (name or key)
+    if not isinstance(rec.get("quant"), dict) or not isinstance(rec.get("visual"), dict):
+        return None, "断点里缺质检结论"
+    return rec, "prompt 未变且产物齐全"
+
+
+def cached_preflight(outdir):
+    """已有的 preflight.json 能不能复用？返回 (info or None, 说明)。"""
+    p = os.path.join(outdir, "preflight.json")
+    if not os.path.isfile(p):
+        return None, "无 preflight.json"
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        return None, "preflight.json 不是合法 JSON（%s）" % e
+    if not isinstance(data, dict):
+        return None, "preflight.json 不是 JSON 对象"
+    if not _strlist(data.get("standalone_objects")):
+        return None, "preflight.json 里 standalone_objects 为空（G0 那次本来就没成功）"
+    if not data.get("_short_edge_px"):
+        return None, "preflight.json 缺 _short_edge_px（旧版本产物，分辨率门禁会失效）"
+    return data, "%d 个候选物品" % len(_strlist(data.get("standalone_objects")))
+
+
+def _log_reused(reused):
+    """把「本次复用了哪些已有产物」汇总打印。
+
+    必须打：续跑时如果日志和全新跑一模一样，人会误以为这些图是这次重新生成的，
+    进而误判「产线稳定」或「问题已复现」。v36 复盘时这类误判发生过。
+    """
+    if not reused:
+        return
+    log("\n【续跑汇总】本次复用了以下已有产物，未重新生成：")
+    for r in reused:
+        log("   ♻️ %s" % r)
+    log("   （要强制全部重新生成：同一条命令加 --fresh）")
+
+
+def resolve_preflight(photo, outdir, work, fresh=False):
+    """G0 入口：能复用就复用，否则真跑一次。返回 (info, small, 复用说明 or None)。
+
+    抽成函数而不是写在 main() 里，是为了能离线回归测试
+    「preflight.json 存在时不重复调用视觉模型」「--fresh 能强制重跑」这两条。
+    """
+    info, why = cached_preflight(outdir)
+    if info is not None and not fresh:
+        small = shrink(photo, os.path.join(work, "src_small.jpg"))
+        note = "preflight.json（G0 结果，%s）—— 本次未调用视觉模型" % why
+        log("  ♻️ 复用已有 G0：%s" % note)
+        log("     要强制重跑 G0 请加 --fresh")
+        return info, small, note
+    if fresh and os.path.isfile(os.path.join(outdir, "preflight.json")):
+        log("  --fresh：忽略已有 preflight.json，重新调用视觉模型跑 G0")
+    elif info is None and os.path.isfile(os.path.join(outdir, "preflight.json")):
+        log("  🟡 已有 preflight.json 不可用（%s），重新跑 G0" % why)
+    info, small = preflight(photo, work)
+    return info, small, None
+
+
 # ── 主流程 ────────────────────────────────────────────────────────────────
 
 def main():
@@ -1603,14 +2005,23 @@ def main():
                          "作为本批物品的一部分画进来（避免多枚都出现同一个甜点盘）")
     ap.add_argument("--allow-people", choices=["auto", "no"], default="auto",
                     help="no = 这一批不出人物（分批时只让其中一批出人物，避免 4 批都有人）")
+    ap.add_argument("--fresh", "--no-resume", dest="fresh", action="store_true",
+                    help="忽略 --outdir 里已有的断点（preflight.json / 各轮产物），"
+                         "强制从 G0 重头跑。默认行为是自动续跑并在日志里说明复用了什么")
     a = ap.parse_args()
 
     os.makedirs(a.outdir, exist_ok=True)
     work = os.path.join(a.outdir, "_work"); os.makedirs(work, exist_ok=True)
 
+    # 断点：默认续跑，--fresh 时整份丢掉重来（不删文件，生图会覆盖同名产物）
+    state = {"rounds": {}} if a.fresh else load_resume(a.outdir)
+    reused = []          # 本次复用了哪些已有产物，收尾时汇总打印
+
     log("═" * 66)
     log("memory-sticker-forge  ·  %s  ·  目标 %d 枚元素" % (os.path.basename(a.photo), a.elements))
     log("provider: %s  |  人物画法: %s" % (providers.describe(), a.figure_style))
+    log("续跑    : %s" % ("关（--fresh，强制从 G0 重头跑）" if a.fresh else
+                          "开（复用已有产物；要从头跑加 --fresh）"))
     log("═" * 66)
 
     # ── R3/R1：跑图前的启动期自检（不消耗任何生图额度）────────────────────
@@ -1646,7 +2057,9 @@ def main():
 
     # G0
     log("\n【G0】照片体检 + 场景解析")
-    info, small = preflight(a.photo, work)
+    info, small, g0_reused = resolve_preflight(a.photo, a.outdir, work, fresh=a.fresh)
+    if g0_reused:
+        reused.append(g0_reused)
     n_obj, n_ppl = plan_mix(info, a.elements)
     log("  像素      : %s（短边 %dpx）" % (info.get("_size_px"), info.get("_short_edge_px") or 0))
     log("  场景     : %s" % info.get("scene"))
@@ -1658,6 +2071,9 @@ def main():
     log("  现代地标    : %s（受著作权保护的建筑作品，本体一律不画）"
         % (", ".join(info.get("modern_landmark_items") or []) or "无"))
     log("  ⭐随身物    : %s" % (", ".join(info.get("carried_items") or []) or "（G0 未标，按词库判定）"))
+    _rok, _rn, _rcats, _rdesc = g0_recall_report(info.get("standalone_objects"))
+    log("  候选池     : %s %s（下限 %d 项 / %d 类，不足会自动补问 G0）"
+        % (_rdesc, "✅" if _rok else "🟡 偏薄", G0_MIN_OBJECTS, G0_MIN_CATEGORIES))
 
     # 分批调度：用外部指定的物品清单覆盖自动选物，并可强制本批不出人物
     if a.objects:
@@ -1699,6 +2115,7 @@ def main():
     log("  ✅ G0 通过")
     if a.preflight_only:
         log("\n（--preflight-only，未生成）")
+        _log_reused(reused)
         return 0
 
     patches, history = [], []
@@ -1712,36 +2129,78 @@ def main():
         with open(os.path.join(a.outdir, "prompt_round%d.txt" % rnd), "w",
                   encoding="utf-8") as f:
             f.write(prompt)
-        png = generate(small, prompt, a.outdir, str(rnd))
-        log("  出图 : %s" % os.path.basename(png))
 
-        # 排版交给代码，不交给模型。重排失败才退回模型原图。
-        sheet, rmeta = png, {}
-        if not a.no_relayout:
-            rp, rmeta, rlog = do_relayout(png, a.outdir, str(rnd), a.gap, a.margin, dpi)
-            if rp:
-                sheet = rp
-                log("  重排 : %s → %s 枚，%s列×%s行，实测最小邻距 %.2fmm / 最小边距 %.2fmm"
-                    % (os.path.basename(rp), rmeta.get("n_elements"),
-                       rmeta.get("cols"), rmeta.get("rows"),
-                       rmeta.get("min_gap_mm", 0), rmeta.get("min_margin_mm", 0)))
-            else:
-                log("  🔴 重排失败，退回模型原图继续质检：\n%s" % rlog[-500:])
+        # ── 断点续跑：这一轮的产物能复用就不重复烧额度（缺陷 B）──────────
+        cache, why = round_cache(state, rnd, prompt, a.outdir)
+        if cache:
+            png = os.path.join(a.outdir, cache["png"])
+            sheet = os.path.join(a.outdir, cache["sheet"])
+            rmeta = cache.get("relayout") or {}
+            q = dict(cache["quant"]); q.setdefault("fails", [])
+            q["raw"] = "（复用断点，本轮未重跑量化质检）"
+            v = cache["visual"]
+            note = ("round%d 的生图 + 重排 + 双重质检结果（%s / %s）"
+                    % (rnd, os.path.basename(png), os.path.basename(sheet)))
+            reused.append(note)
+            log("  ♻️ 复用第 %d 轮已有产物（%s）：%s + %s"
+                % (rnd, why, os.path.basename(png), os.path.basename(sheet)))
+            log("     未重复生图、未重复质检。要强制重跑请加 --fresh")
+            log("  量化 : %s dpi | 必须修 %s | 元素 %s/刀线 %s | 最小邻距 %s mm（复用）"
+                % (q.get("dpi"), q.get("must_fix"), q.get("n_elem"),
+                   q.get("n_cut"), q.get("min_gap")))
+            log("  目视 : 共 %s 枚 | 纯物品 %s 枚 (%s)（复用）"
+                % (v.get("n_elements"), v.get("n_object_only"),
+                   ", ".join(_strlist(v.get("object_names"))[:8])))
+        else:
+            if (state.get("rounds") or {}).get(str(rnd)):
+                log("  ▸ 第 %d 轮不可复用（%s），重新生成" % (rnd, why))
+            try:
+                png = generate(small, prompt, a.outdir, str(rnd))
+            except SystemExit as e:
+                # provider 已在内部按 2/4/8 秒指数退避重试过；到这里说明真的没恢复。
+                # 关键是【不要丢掉断点】：G0 与前面几轮的产物都已落盘，重跑同一条
+                # 命令就能续上，不用再从 G0 烧一遍（v36 01 生日白烧 2 次就是这么来的）。
+                log("\n%s" % e)
+                log("\n❌ 第 %d 轮生图失败，本单中止。" % rnd)
+                log("   ♻️ 断点已保存：G0 结果与第 1~%d 轮产物都在 %s，"
+                    "直接重跑同一条命令即可续跑（会自动复用，不重复烧额度）；"
+                    "要从头跑请加 --fresh" % (rnd - 1, a.outdir))
+                _log_reused(reused)
+                save_resume(a.outdir, state)
+                if history:
+                    write_report(a.outdir, info, history, rnd - 1, False, dpi=dpi, guard=guard)
+                return 4
+            log("  出图 : %s" % os.path.basename(png))
 
-        q = qc_quant(sheet)
-        log("  量化 : %s dpi | 必须修 %s | 元素 %s/刀线 %s | 最小邻距 %s mm"
-            % (q["dpi"], q["must_fix"], q["n_elem"], q["n_cut"], q["min_gap"]))
-        v = qc_visual(sheet, work, a.elements, n_obj, str(rnd), n_ppl, a.figure_style,
-                      expected=picked)
-        log("  目视 : 共 %s 枚 | 纯物品 %s 枚 (%s)"
-            % (v.get("n_elements"), v.get("n_object_only"), ", ".join(_strlist(v.get("object_names"))[:8])))
+            # 排版交给代码，不交给模型。重排失败才退回模型原图。
+            sheet, rmeta = png, {}
+            if not a.no_relayout:
+                rp, rmeta, rlog = do_relayout(png, a.outdir, str(rnd), a.gap, a.margin, dpi)
+                if rp:
+                    sheet = rp
+                    log("  重排 : %s → %s 枚，%s列×%s行，实测最小邻距 %.2fmm / 最小边距 %.2fmm"
+                        % (os.path.basename(rp), rmeta.get("n_elements"),
+                           rmeta.get("cols"), rmeta.get("rows"),
+                           rmeta.get("min_gap_mm", 0), rmeta.get("min_margin_mm", 0)))
+                else:
+                    log("  🔴 重排失败，退回模型原图继续质检：\n%s" % rlog[-500:])
+
+            q = qc_quant(sheet)
+            log("  量化 : %s dpi | 必须修 %s | 元素 %s/刀线 %s | 最小邻距 %s mm"
+                % (q["dpi"], q["must_fix"], q["n_elem"], q["n_cut"], q["min_gap"]))
+            v = qc_visual(sheet, work, a.elements, n_obj, str(rnd), n_ppl, a.figure_style,
+                          expected=picked)
+            log("  目视 : 共 %s 枚 | 纯物品 %s 枚 (%s)"
+                % (v.get("n_elements"), v.get("n_object_only"), ", ".join(_strlist(v.get("object_names"))[:8])))
+            # 质检结论已经拿到，立刻落断点：下一轮若被 provider 打断，这一轮不必重跑
+            record_round(state, rnd, prompt, png, sheet, rmeta, q, v, a.outdir)
 
         fails = q["fails"] + v["fails"]
         history.append({"round": rnd, "png": os.path.basename(sheet),
                         "relayout": ({k: rmeta.get(k) for k in
                                       ("n_elements", "cols", "rows", "min_gap_mm",
                                        "min_margin_mm", "shrink_k")} if rmeta else None),
-                        "quant": {k: q[k] for k in
+                        "quant": {k: q.get(k) for k in
                         ("dpi", "must_fix", "n_elem", "n_cut", "min_gap")}, "visual": v, "fails": fails})
         if not fails:
             log("  ✅ 双重质检全过")
@@ -1764,6 +2223,7 @@ def main():
                     % (rp2.returncode, (rp2.stdout + rp2.stderr)[-500:]))
             log("   凑满 4 单后拼 A3：python3 ../print-ready-doctor/impose_a3.py "
                 "单1/FINAL.png 单2/FINAL.png 单3/FINAL.png 单4/FINAL.png --outdir a3_out/")
+            _log_reused(reused)
             return 0
 
         log("  🔴 不合格 %d 项：" % len(fails))
@@ -1785,6 +2245,7 @@ def main():
 
     log("\n❌ %d 轮仍未通过，不交付。见 qc_report.md" % a.max_rounds)
     write_report(a.outdir, info, history, a.max_rounds, False, dpi=dpi, guard=guard)
+    _log_reused(reused)
     return 2
 
 def write_report(outdir, info, history, rounds, passed, dpi=None, guard=None):

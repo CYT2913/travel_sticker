@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-09-01 · 缺陷 A/B/C 三修 + 06 银杏 v37 重跑交付 · v3.4.1
+
+修 v36 暴露的 3 个缺陷，并重跑 06 银杏 → `run_v37/p6/`、`交付_v37_20260901/06_银杏_v37厂家文件/`（`run_v36/` 未覆盖）。`tests/` 101 → **128 项全绿**（新增 `tests/test_g0_retry_and_resume.py` 27 项）。
+
+**缺陷 A（已修）· G0 返回截断 JSON 时整单直接崩**
+
+`preflight()` 拆成 `_g0_ask_with_retry()` + `g0_parse_problem()` + `_g0_normalize()`，对**可恢复错误**做**有限 3 次**重试：空返回 / 非 JSON / 花括号未闭合（v36 02 就是在 `"mode` 处断的）/ 顶层不是对象 / `standalone_objects` 空且没给拒单理由。重试时在任务描述后追加 `G0_JSON_ONLY_HINT`（只输出闭合的 JSON、字段值尽量短、不要解释文字），**不改判定标准、不放宽字段**。3 次仍失败才退出，报错明确写「G0 阶段失败」并带最后一次的解析问题。不可恢复错误（模型明确拒单等）不重试。
+
+**缺陷 B（已修）· 无断点续跑 + provider 400 整单重来**
+
+- 断点续跑：新增 `resume_state.json` + `prompt_sig()`（prompt 的 sha256 前 16 位）。`resolve_preflight()` 校验 `preflight.json` 有效就复用，**不再调视觉模型**；每轮 QC 结论一拿到就 `record_round()` 落盘，重跑时 `round_cache()` 只在「同一轮号 + prompt 哈希一致 + 产物文件都在 + QC 数据齐」四条同时成立时复用，否则重生成 —— 换了选品必然改 prompt，哈希跟着变，不会拿旧图冒充新图。
+- `--fresh` / `--no-resume` 强制从 G0 重跑。
+- 复用必须可见：G0 与每一轮都打「♻️ 复用…本次未调用视觉模型 / 未重复生图」，结尾再打一次「【续跑汇总】」列出全部复用项，避免误以为是新跑的。
+- provider 400 退避重试：`providers.generate_image()` 加 `GEN_MAX_ATTEMPTS=3` + `GEN_BACKOFF_SEC=(2,4,8)`。`_is_transient()` 把 `400 Client Error`、连接/超时/5xx 当瞬时错误重试（v36 01+06 共撞 5 次，实测相当比例是瞬时的）；invalid api key / model not found / 内容审核 / 余额不足 / 分辨率门禁不合格属永久错误，**不重试**。HTTP 码用词边界正则匹配，不会把 `1739px`、`2352x3520` 里的数字误判成状态码。每次尝试前先删同名旧产物，失败时不可能交付上一轮的图。
+- 生图彻底失败时退出码 4，**断点保留**，日志直接给出「重跑同一条命令即可续跑」。
+
+**缺陷 C（已修）· `SCENE_LANDMARK_OVERRIDE` 之前只同步没推送**
+
+复查确认：该常量在两份 `forge.py` 里都在（`sync_studio.py --check` 一致），但 `b000dde` 里没有它 —— v36 那轮只同步到公开副本工作区，从未 commit/push。本轮随这次提交一并推到 GitHub `main`。
+
+**G0 召回稳定性（06 银杏根因）**
+
+`PREFLIGHT_TASK` 的 `standalone_objects` 要求从「至少 6 个」提到「**至少 10 个、最多 14 个**」，并显式要求跨类别（随身物 / 自然物 / 建筑设施）。新增 `g0_category()` + `g0_recall_report()`，下限 `G0_MIN_OBJECTS=10` / `G0_MIN_CATEGORIES=3`；不达标时 `_g0_fill_recall()` 最多补问 2 次，提示「再补充一些不同类别的物品，尤其是人物随身携带的东西（背包/外套/鞋/手机/水壶/门票…）」，`_g0_merge()` 只做增量合并，**不会挤掉已召回的 `ginkgo leaf`**。补问后仍不足只告警不阻断（有些照片确实物件少）。实测 06 银杏本轮 G0 一次给出 **12 项 / 4 类**（v36 那次只有 6 项且全为树/墙同族）。
+
+**06 银杏重跑结果（v37）**
+
+跑 2 次命令、共 5 轮，**无人工干预**（没用 `--objects`）：首次 `--max-rounds 4` 四轮未过；第二次同一条命令加 `--max-rounds 8`，**断点续跑复用了 G0 + 第 1~4 轮全部产物**（未重复调视觉模型、未重复生图），第 5 轮双重质检通过。最终 6 枚 = `ginkgo leaf / backpack / baseball cap / coat / stone pillar` **5 枚纯物品 + 1 枚人物群像**，**银杏叶在，且是版面主角**；人物为 collage 分色（有肤色/衣服色、无脸），画风与 v36 其他三张一致。中途 `ConvergenceGuard` 因「焦点色占比 >15%」两次换元素（shoes → wall lattice → stone pillar），这正是 v35 就记录过的「银杏固有色单一」老问题，靠换选品绕过，未调阈值。
+
+**印前**：400dpi（2331×3307）/ 6 枚 / 刀线 6 条 / 必须修 0 / 高危 0 / 最小邻距 8.63mm / 最小边距 10.2mm / 最窄笔画 0.81mm / 最窄刀线通道 9.02mm / RGB / layout_ok。内嵌 SVG cairosvg 渲染校验：1 张内嵌位图、非白像素 39.5%、无外链。卡纸图 3307×2331 = 210×148mm@400dpi。
+
+**交付**：`交付_v37_20260901/06_银杏_v37厂家文件/` 共 11 个文件（三份核心文件 + 三个 PDF + 单枚透明 PNG + 模切店须知）；v36 的 06 银杏交付包**已作废，不要再发给模切店**。
+
+**变更文件**：`memory-sticker-forge/forge.py`、`memory-sticker-forge/providers.py`、`tests/test_g0_retry_and_resume.py`（新增 27 项）、`CONTEXT.md`
+
+---
+
 ## 2026-09-01 · 红队评审 R1~R5 整改 + IP 合规策略收紧 · v3.4.0
 
 **本轮未跑生图**，全部是代码 + 离线测试。红队 5 条问题按「有道理就修」处理，另落地客户新的 IP 合规策略。`tests/` 48 → **101 项全绿**。

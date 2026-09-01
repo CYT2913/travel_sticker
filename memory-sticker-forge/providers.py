@@ -82,8 +82,66 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 
 PROVIDER = os.environ.get("FORGE_PROVIDER", "openai").strip().lower()
+
+# ══════════════════════════════════════════════════════════════════════════
+# 瞬时错误重试（2026-09-02 · v36 实跑暴露）
+# ══════════════════════════════════════════════════════════════════════════
+# v36 一轮交付里 `400 Client Error` 打断了 6 次生图（01 白烧 2 次、06 连撞 3 次），
+# 而重跑同一条命令往往就过了 —— 说明这类错误里有相当比例是【瞬时】的：网关抖动、
+# 上游排队、审核服务超时。旧实现一次 400 就把异常抛到 forge.py，整单从 G0 重来。
+#
+# 所以在 provider 出口做有限次指数退避重试。三条边界必须守住：
+#   ① 只重试【瞬时特征】的错误（见 TRANSIENT_MARKERS）。key 错、模型 ID 不存在、
+#      内容被拒、分辨率不达标这些重试一万次也是同样结果，必须立刻失败，
+#      否则等于把 3 倍时间和 3 倍额度烧在必然失败的请求上。
+#   ② 次数有上限（默认 3 次），间隔 2/4/8 秒。生图是花钱的，不允许无限重试。
+#   ③ 每次重试前先清掉可能存在的半成品文件，绝不把上一次的残留当本次产物。
+GEN_MAX_ATTEMPTS = max(1, int(os.environ.get("FORGE_GEN_MAX_ATTEMPTS", "3")))
+GEN_BACKOFF_SEC = (2, 4, 8)
+
+# 判定「瞬时」的特征串（大小写不敏感，子串匹配）。
+# 400 放进来是实测结论而不是理论推断：v36 六次 400 里重跑即过的占多数。
+TRANSIENT_MARKERS = (
+    "400 client error", "bad request",
+    "bad gateway", "service unavailable", "gateway time-out", "gateway timeout",
+    "timeout", "timed out", "connection reset", "connection aborted",
+    "connection error", "remote end closed", "temporarily", "try again",
+    "rate limit", "too many requests", "server error", "internal error",
+    # _claim_generated 的「产物无法唯一确定」自己就写着「请重试本轮生成」
+    "请重试本轮生成", "没有产出有效图片",
+)
+# HTTP 状态码单独用词边界匹配：写成裸子串会被 "1503px"、"2352x3520" 这类
+# 尺寸数字误命中，那会把「分辨率不达标」这种必然失败的错误也拖去重试 3 次。
+TRANSIENT_STATUS_RE = re.compile(r"(?<!\d)(408|409|425|429|500|502|503|504)(?!\d)")
+
+# 明确【不该重试】的特征串。优先级高于 TRANSIENT_MARKERS：
+# 很多厂商把「key 无效」「模型不存在」「内容被拒」也塞在 400 里返回，
+# 那种 400 重试三次只是白等 14 秒。
+PERMANENT_MARKERS = (
+    "api key", "apikey", "unauthorized", "401", "403", "invalid_api_key",
+    "authentication", "permission", "model not found", "invalid model",
+    "does not exist", "content policy", "content_policy", "safety",
+    "moderation", "被拒", "违规", "短边不足", "未知的 provider",
+    "insufficient", "quota exceeded", "balance",
+)
+
+
+def _is_transient(msg):
+    """这条错误值不值得重试。判不准时一律按【不重试】处理（宁可少烧额度）。"""
+    m = (msg or "").lower()
+    if any(p in m for p in PERMANENT_MARKERS):
+        return False
+    if any(t in m for t in TRANSIENT_MARKERS):
+        return True
+    return bool(TRANSIENT_STATUS_RE.search(m))
+
+
+def _backoff_sec(attempt):
+    """第 attempt 次失败后要等几秒（attempt 从 1 开始）。"""
+    return GEN_BACKOFF_SEC[min(max(attempt, 1) - 1, len(GEN_BACKOFF_SEC) - 1)]
 
 # ══════════════════════════════════════════════════════════════════════════
 # 尺寸推导（R3：不写魔数）
@@ -1001,21 +1059,50 @@ def print_selftest(provider=None, offline=None, requested_dpi=TARGET_DPI,
     return code
 
 
-def generate_image(photo_path, prompt, out_png):
-    """图生图。返回 out_png 路径。会校验输出分辨率并在不足时明确报错。"""
-    fn, name = _pick(_GEN, "image")
-    # 先删掉可能存在的同名旧文件：同一个 outdir 被重跑时，上一次的 round1.png
-    # 会留在那儿；本次生图失败的话，下面的 os.path.exists 检查就会把【旧文件】
-    # 当成本次产物放行并交付 —— 和「认领别人的图」是同一类缺陷。
+def _purge_stale(out_png):
+    """生图前先清掉可能存在的同名旧文件。
+
+    同一个 outdir 被重跑时，上一次的 round1.png 会留在那儿；本次生图失败的话，
+    后面的 os.path.exists 检查就会把【旧文件】当成本次产物放行并交付 ——
+    和「认领别人的图」是同一类缺陷。重试循环里每一次尝试前都要做。
+    """
     if os.path.exists(out_png):
         try:
             os.remove(out_png)
         except OSError as e:
             raise ProviderError("无法清除旧产物 %s（%s），拒绝在可能交付旧图的情况下继续"
                                 % (out_png, e))
-    fn(photo_path, prompt, out_png)
-    if not os.path.exists(out_png) or os.path.getsize(out_png) == 0:
-        raise ProviderError("provider %s 没有产出有效图片" % name)
+
+
+def generate_image(photo_path, prompt, out_png):
+    """图生图。返回 out_png 路径。会校验输出分辨率并在不足时明确报错。
+
+    瞬时错误（`400 Client Error` / 5xx / 超时 / 产物认领不唯一）走有限次
+    指数退避重试，见文件头「瞬时错误重试」。永久性错误立刻抛出，不浪费额度。
+    """
+    fn, name = _pick(_GEN, "image")
+    for attempt in range(1, GEN_MAX_ATTEMPTS + 1):
+        _purge_stale(out_png)
+        try:
+            fn(photo_path, prompt, out_png)
+            if not os.path.exists(out_png) or os.path.getsize(out_png) == 0:
+                raise ProviderError("provider %s 没有产出有效图片" % name)
+            break
+        except Exception as e:
+            transient = _is_transient(str(e))
+            if attempt >= GEN_MAX_ATTEMPTS or not transient:
+                if transient:
+                    raise ProviderError(
+                        "provider %s 连续 %d 次生图失败（已按 %s 秒指数退避重试），"
+                        "判定为瞬时错误但一直没恢复，最后一次：%s"
+                        % (name, GEN_MAX_ATTEMPTS,
+                           "/".join(str(s) for s in GEN_BACKOFF_SEC[:GEN_MAX_ATTEMPTS]), e))
+                raise
+            wait = _backoff_sec(attempt)
+            print("⚠️ provider %s 第 %d/%d 次生图失败，判定为【瞬时错误】，%d 秒后重试：%s"
+                  % (name, attempt, GEN_MAX_ATTEMPTS, wait, str(e)[:400]),
+                  file=sys.stderr)
+            time.sleep(wait)
 
     try:
         from PIL import Image
