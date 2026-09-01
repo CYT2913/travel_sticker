@@ -118,9 +118,21 @@ JSON 字段：
   "lighting": "day" 或 "night",          // 舞台强色光/夜景/暗光算 night；日光/室内暖光算 day
   "people_count": 整数,                   // 画面中可辨识的人数
   "has_minor": true/false,                // 是否可能含未成年人
-  "ip_items": ["..."],                    // 所有品牌logo、赞助商字样、产品字标、大屏画面内容、海报图案、动漫形象。没有则空数组
+  "ip_items": ["..."],                    // 【🔴 绝对不碰】所有品牌logo/字标/商标文字、赞助商字样、产品字标、大屏画面内容、海报图案、
+                                          // 动漫或游戏形象、卡通吉祥物、玩偶/手办/盲盒形象、主题乐园（迪士尼/环球等）元素、
+                                          // 景区吉祥物、景区文创商品上的原创设计图案。没有则空数组
+  "modern_landmark_items": ["..."],       // 【现代地标建筑本体】受著作权保护的建筑作品：体育场馆、摩天楼、电视塔/观光塔、
+                                          // 会展中心、歌剧院/音乐厅、机场航站楼、大型商场、任何有在世建筑师署名的现代建筑。
+                                          // ⚠️ 不包含古建筑：城墙、古塔、飞檐、斗拱、石狮、牌楼、亭子、宫殿屋顶属公共领域，不要写进来。
+                                          // 名称必须与 standalone_objects 里完全一致。没有则空数组
+  "carried_items": ["..."],               // 【那天你带着的东西】随身物/消耗品/自然物：门票、票根、地图、水壶、背包、帽子、
+                                          // 相机、鞋、伞、冰淇淋、饮料、食物、落叶、合影照片等。名称必须与 standalone_objects 一致
   "standalone_objects": ["...","..."],    // 至少6个、最多8个【能单独抠出来做贴纸的实体物品】，按"纪念价值"从高到低排（不是按体量）。
                                           // 必须是物品不是人；必须是画面里真实存在的；用英文，简短具体，如 "electric guitar","drum kit","birthday cake"
+  "composite_parts": [["A","B"]],         // 【复合物体拆解】清单里凡是「由多个可独立成立的部件组成」或「靠支架/细杆撑起来」的整体 A，
+                                          // 给出其中最具代表性、体量最厚实、能单独成立的那一个部件 B。
+                                          // 如 [["drum kit","bass drum"],["lego set","lego brick"],["gachapon machine","capsule toy"]]。
+                                          // 不确定就不要写。没有则空数组
   "keepsake_objects": ["..."],            // 从 standalone_objects 中挑出【最能代表这个场合、最有纪念意义】的物品，2~4个。
                                           // 例如生日场合的 "candle","sparkler","balloon"；演出场合的主乐器；旅行场合的地标构件。
                                           // 这些即使体量小、即使偏细，也必须做成贴纸，绝不可省略。
@@ -135,6 +147,13 @@ JSON 字段：
 }
 
 判定 standalone_objects 时注意：
+0. ⭐【最优先】优先选「那天你带着的东西」：门票、票根、地图、水壶、背包、帽子、相机、伞、鞋、
+   冰淇淋、饮料、食物、落叶、合影照片这类随身物 / 消耗品 / 自然物。它们比地标建筑更值得画，
+   同时写进 carried_items。
+   🟢 可以画：不受著作权保护的自然景观与古建筑本体 —— 山、树、湖、城墙、古塔轮廓、飞檐、石狮。
+   🔴 不要选：卡通吉祥物、玩偶/手办/盲盒形象、主题乐园元素、文创商品上的原创设计、任何商标字标或 logo；
+      现代地标建筑本体（体育场馆、摩天楼、电视塔、会展中心等）也不要选，它们是受著作权保护的建筑作品；
+      这类东西一律写进 ip_items 或 modern_landmark_items，不要写进 standalone_objects。
 1. 优先选有辨识度、轮廓完整的物品；体量小但有纪念意义的（蜡烛、仙女棒、气球）要选进来并同时写进 keepsake_objects。
 2. 不要选人体部位，不要选背景墙面。
 3. 同一类物品只保留最有代表性的一个（有两把吉他就只留主吉他），其余的写进 similar_pairs。
@@ -145,7 +164,9 @@ JSON 字段：
    看到 microphone stand（麦架）→ 只选 "microphone"；
    看到 camera tripod（三脚架）→ 只选 "camera"；
    看到 cymbal stand（镲架）→ 只选 "cymbal"。
-   清单里出现 "kit"、"set"、"rig"、"stand"、"tripod"、"rack" 这类词，几乎都是选错了。"""
+   清单里出现 "kit"、"set"、"rig"、"stand"、"tripod"、"rack" 这类词，几乎都是选错了。
+   ⚠️ 这条对【任何品类】都成立，不限于乐器：乐高套装、盲盒套组、扭蛋机、玩具组、模型套件、
+   相机三脚架、行李推车……只要是「一堆部件 + 支撑结构」，就在 composite_parts 里给出单件。"""
 
 # ── G0 字段兜底词库 ────────────────────────────────────────────────────────
 # 为什么要有这两张表：container_pairs / keepsake_objects 是 G0 的「可选字段」，
@@ -209,6 +230,162 @@ def _words(name):
     return set(_norm(name).split())
 
 
+# ── IP 合规三级边界（2026-09-01 客户收紧策略） ──────────────────────────────
+# 🔴 绝对不碰：主题乐园（迪士尼/环球）、景区吉祥物、景区文创设计、商标字标、
+#             卡通/玩偶/手办/盲盒形象 → 硬剔除，一枚都不出。
+# 🟢 可以做  ：不受著作权保护的自然景观与古建筑本体（山/树/湖/城墙/古塔/飞檐/石狮）。
+# ⭐ 最优先  ：「那天你带着的东西」—— 随身物、消耗品、自然物。
+#
+# ⚠️ 词库只是先验，不是判据全部。真正兜住新品类的是三条不依赖词库的通用层：
+#    (a) G0 让视觉模型自己填 ip_items / modern_landmark_items（模型判断 > 词表）；
+#    (b) 目视质检复检 banned_ip_or_landmark，漏网的当轮判废；
+#    (c) 被判废的物体走 ConvergenceGuard 永久剔除并换候选，不原地重试。
+HARD_BAN_WORDS = {
+    # 卡通 / 玩偶 / 手办 / 盲盒形象
+    "mascot", "mascots", "doll", "dolls", "plush", "plushie", "plushies",
+    "plushy", "figurine", "figurines", "funko", "amigurumi",
+    "cartoon", "anime", "manga", "chibi", "vtuber",
+    # 商标字标 / 品牌名
+    "logo", "logos", "wordmark", "wordmarks", "trademark", "brand", "branded",
+    "sponsor", "livery", "liveries", "decal", "decals",
+    # 授权商品 / 文创商品设计
+    "merch", "merchandise",
+}
+HARD_BAN_PHRASES = {
+    "theme park", "amusement park", "theme park castle", "fairytale castle",
+    "fairy tale castle", "cinderella castle", "park mascot", "scenic mascot",
+    "mascot costume", "cartoon character", "anime character", "game character",
+    "character goods", "character mascot", "stuffed animal", "stuffed toy",
+    "soft toy", "plush toy", "plush doll", "blind box", "blind box figure",
+    "mystery box figure", "gashapon figure", "capsule toy figure",
+    "action figure", "collectible figure", "resin figure", "bobblehead",
+    "cultural creative product", "cultural product", "creative merchandise",
+    "souvenir merchandise", "licensed merchandise", "official merchandise",
+    "branded merchandise", "gift shop merchandise", "designer toy",
+    "art toy", "brand logo", "brand name", "team logo", "sponsor logo",
+    "sponsor board", "brand mascot", "ip character",
+}
+# 现代地标建筑本体：受著作权保护的建筑作品（多有在世建筑师署名）→ 剔除。
+# 只放【确定语义】的词组和无歧义单词，避免误伤 "temple gate"、"bell tower" 这类古建。
+MODERN_LANDMARK_WORDS = {
+    "stadium", "stadiums", "arena", "arenas", "skyscraper", "skyscrapers",
+    "gymnasium", "velodrome", "natatorium", "megamall",
+}
+MODERN_LANDMARK_PHRASES = {
+    "bird nest stadium", "birds nest stadium", "bird s nest stadium",
+    "national stadium", "olympic stadium", "olympic tower", "water cube",
+    "national aquatics center", "aquatics center", "sports center",
+    "sports centre", "sports arena", "sports complex",
+    "convention center", "convention centre", "exhibition center",
+    "exhibition centre", "exhibition hall", "opera house", "concert hall",
+    "tv tower", "television tower", "observation tower", "observation deck",
+    "observation wheel", "ferris wheel", "office tower", "office building",
+    "high rise", "high rise building", "glass tower", "glass facade tower",
+    "steel tower", "shopping mall", "shopping center", "shopping centre",
+    "airport terminal", "terminal building", "railway station building",
+    "train station building", "museum building", "library building",
+    "art museum building", "modern building", "modern architecture",
+    "landmark building", "landmark tower", "iconic building",
+    "iconic skyscraper", "city skyline", "skyline",
+}
+# 古建筑 / 公共领域构件：命中这些词时，即使同时命中现代词也按「可以画」处理。
+ANCIENT_ARCH_WORDS = {
+    "ancient", "historic", "historical", "traditional", "imperial", "dynasty",
+    "ming", "qing", "tang", "song",
+    "pagoda", "temple", "shrine", "palace", "eave", "eaves", "dougong",
+    "bracket", "hutong", "siheyuan", "pavilion", "archway", "paifang",
+    "torii", "stele", "watchtower", "drum tower", "bell tower", "city wall",
+    "battlement", "battlements", "crenellation", "stone lion", "lion",
+    "ruins", "relic", "courtyard", "roof tile", "glazed tile", "moat",
+}
+# ⭐ 那天你带着的东西：随身物 / 消耗品 / 自然物 —— 排序里提到最高优先级档。
+CARRY_WORDS = {
+    # 票证纸品
+    "ticket", "tickets", "stub", "stubs", "boarding", "pass", "map", "maps",
+    "postcard", "postcards", "stamp", "stamps", "photo", "photos",
+    "photograph", "polaroid", "receipt", "wristband", "lanyard",
+    # 随身携带
+    "backpack", "rucksack", "bag", "tote", "handbag", "purse", "pouch",
+    "suitcase", "luggage", "hat", "cap", "beanie", "sunhat", "scarf",
+    "glove", "gloves", "umbrella", "parasol", "camera", "phone",
+    "smartphone", "sunglasses", "glasses", "wallet", "keys", "watch",
+    "shoe", "shoes", "sneaker", "sneakers", "boot", "boots", "sandal",
+    "sandals", "sock", "socks", "notebook", "sketchbook", "pen", "pencil",
+    "bottle", "flask", "thermos", "tumbler", "canteen", "fan", "towel",
+    "headphones", "earphones", "earbuds", "mask", "badge", "pin", "keyring",
+    # 消耗品 / 吃喝
+    "ice", "cream", "icecream", "popsicle", "gelato", "cone", "coffee",
+    "tea", "boba", "soda", "juice", "drink", "snack", "bread", "sandwich",
+    "cake", "candy", "fruit", "apple", "orange", "banana", "skewer",
+    "noodles", "dumpling", "dumplings", "straw", "cup", "mug",
+    # 自然物（捡得起来的那种）
+    "leaf", "leaves", "petal", "petals", "pinecone", "acorn", "shell",
+    "pebble", "feather", "twig", "flower", "blossom",
+}
+CARRY_PHRASES = {
+    "ice cream", "ice cream cone", "water bottle", "coffee cup", "paper cup",
+    "bubble tea", "milk tea", "ticket stub", "entry ticket", "admission ticket",
+    "paper map", "tourist map", "guide map", "folding fan", "sun hat",
+    "group photo", "group picture", "instant photo", "fallen leaf",
+    "fallen leaves", "ginkgo leaf", "maple leaf", "picnic mat",
+    "picnic blanket", "tote bag", "canvas bag", "shoulder bag",
+}
+# 「成套 / 支撑结构」中心词：通用兜底拆解用。词库未命中的新品类靠这里落地。
+COMPOSITE_HEADS = {
+    "kit", "kits", "set", "sets", "rig", "rigs", "stand", "stands",
+    "tripod", "tripods", "rack", "racks", "mount", "mounts", "assembly",
+    "assemblies", "system", "systems", "ensemble", "combo",
+    "installation", "apparatus", "station", "cart", "trolley",
+}
+# ⚠️ 不要把 pile / stack / bunch / bundle 这类【集合量词】放进来（见 COLLECTIVE_HEADS）：
+#    "leaf pile" 的中心词虽是量词，但它不是成套装备，去掉量词会打乱同族判定。
+
+
+def _phrase_hit(name, phrases):
+    """按词边界做整词组匹配（避免 "cutting board" 误命中 "board" 类判定）。"""
+    padded = " %s " % _norm(name)
+    return any((" %s " % p) in padded for p in phrases)
+
+
+def _hard_banned(name):
+    """🔴 绝对不碰：卡通吉祥物/玩偶/主题乐园/文创设计/商标字标 → 直接剔除。"""
+    return bool(_words(name) & HARD_BAN_WORDS) or _phrase_hit(name, HARD_BAN_PHRASES)
+
+
+def _ancient_arch(name):
+    """🟢 古建筑本体 / 公共领域构件：可以画。"""
+    return bool(_words(name) & ANCIENT_ARCH_WORDS) or _phrase_hit(
+        name, {"city wall", "stone lion", "drum tower", "bell tower"})
+
+
+def _modern_landmark(name):
+    """现代地标建筑本体（受著作权保护的建筑作品）→ 剔除。
+
+    与古建筑的区分点：命中古建词（ancient / pagoda / city wall / eaves…）就放行，
+    所以 "ancient watchtower"、"pagoda tower" 不会被误杀，而 "national stadium"、
+    "observation tower"、"glass tower" 会被拦下。
+    """
+    if _ancient_arch(name):
+        return False
+    return bool(_words(name) & MODERN_LANDMARK_WORDS) or _phrase_hit(
+        name, MODERN_LANDMARK_PHRASES)
+
+
+def _carry_item(name):
+    """⭐「那天你带着的东西」：随身物 / 消耗品 / 自然物 → 最高优先级档。"""
+    return bool(_words(name) & CARRY_WORDS) or _phrase_hit(name, CARRY_PHRASES)
+
+
+def _ip_reason(name):
+    """返回硬剔除原因；不该剔除时返回 None。词库层，模型层在 select_objects 里合并。"""
+    if _hard_banned(name):
+        return "🔴 IP 硬禁止（卡通吉祥物/玩偶/主题乐园/文创设计/商标字标）"
+    if _modern_landmark(name):
+        return "🔴 现代地标建筑本体（受著作权保护的建筑作品，古建筑本体才可画）"
+    return None
+
+
+
 def infer_container_pairs(objs, given):
     """模型给了就沿用；没给就按词库推断 (内容物, 容器) 对。"""
     pairs = [p for p in (given or []) if isinstance(p, (list, tuple)) and len(p) == 2]
@@ -263,6 +440,19 @@ def preflight(photo, workdir):
                     ("similar_pairs", []), ("people_count", 0)):
         if data.get(_k) is None:
             data[_k] = _dv
+    # 形状归一（2026-09-01）：上面只解决了 null，没解决【类型不对】。
+    # 视觉模型对同一个字段可能回 ["a","b"]、"a, b"、[{"name":"a"}] 三种形状，
+    # 后面这些字段全都直接进 for / join / set 推导，一旦形状不对就抛 TypeError，
+    # 而抛点在 G0 之后 —— 表现是「这一单直接崩，交付不出来」。
+    # 所以在【边界】统一过一遍 _strlist，后续代码可以放心假设是 [str]。
+    for _k in ("ip_items", "thin_parts", "standalone_objects", "keepsake_objects",
+               "modern_landmark_items", "carried_items", "text_dependent",
+               "color_palette"):
+        if _k in data:
+            data[_k] = _strlist(data.get(_k))
+    # composite_parts 是成对结构，用 _pairs_from 归一成 [[整体, 单件]]
+    if data.get("composite_parts") is not None:
+        data["composite_parts"] = [[a, b] for a, b in _pairs_from(data["composite_parts"])]
     # 模型漏标时用内置词库补全，不依赖模型自觉
     data["container_pairs"] = infer_container_pairs(
         data["standalone_objects"], data["container_pairs"])
@@ -370,6 +560,21 @@ THICKNESS = """MANUFACTURING RULE - THICKNESS: this sheet is machine cut, so no 
 
 COMPLIANCE = """MUST OMIT - copyright safety: no brand logos, sponsor decals, team liveries, wordmarks, screen graphics, poster or album artwork, cartoon characters or any other recognizable third-party IP. Specifically remove: %s - replace each with a plain flat painted colour block. Render NO readable text, letterforms, numbers or watermarks anywhere."""
 
+# 2026-09-01 客户 IP 策略：写进 prompt 的硬边界。代码侧已在选品阶段剔除，
+# 但生图模型会「顺手」把地标补进画面（05 鸟巢实拍：清单里没有体育场，模型自己加了），
+# 所以 prompt 里必须再声明一次。
+IP_POLICY = """IP AND TRADEMARK POLICY - HARD LIMITS, NEVER DRAW THESE:
+- No theme-park elements of any kind (no Disney, no Universal, no park castle, no park ride branding), no scenic-area mascots, no cultural-merchandise designs from any gift shop.
+- No cartoon characters, no mascot suits, no dolls, plush toys, figurines, blind-box or collectible figures.
+- No brand logos, wordmarks, brand names, trademarks, sponsor boards or product lettering. No readable text at all.
+- No MODERN LANDMARK BUILDINGS as a subject: no stadium, arena, skyscraper, TV or observation tower, convention centre, opera house, glass office tower, shopping mall or city skyline. Modern buildings are copyrighted architectural works.
+ALLOWED instead: plain natural scenery and ANCIENT architecture as a form - mountains, trees, a lake, a city wall, a pagoda silhouette, an upturned eave, a stone lion, roof tiles.
+PREFERRED above all: the things the customer was carrying that day - the ticket, the paper map, the water bottle, the backpack, the hat, the ice cream, a fallen leaf, the photo they took."""
+
+# 「自带支架/底座」的通用约束：不枚举 drum kit / mic stand（枚举永远漏），
+# 而是描述这个类别的共同特征，让模型自己判断。质检侧有对应的通用复检。
+NO_SUPPORT_RIG = """NO SUPPORT STRUCTURE - GENERAL RULE: every element is the object ITSELF and nothing else. If the real object sits on, hangs from or is held up by something that is not part of it - a stand, a tripod, a pole, a bracket, a rack, a mount, a pedestal, a base plate, a hook, a shelf, a table or the floor - drop that supporting part entirely and draw the object as one compact chunky shape floating alone. Never draw an assembly of several parts joined by thin rods. If an object only makes sense as a whole set, draw just the single thickest, most recognisable piece of that set."""
+
 # ⚠️ 元素构成配比 —— 解决"全是人物剪影"的关键
 # 「不许把切片补成整只」的形状忠实度约束也放这里：客户实拍中三角蛋糕被泛化成圆蛋糕。
 COMPOSITION = """ELEMENT COMPOSITION - MANDATORY, THIS IS THE MOST IMPORTANT RULE:
@@ -414,6 +619,42 @@ def plan_mix(info, n):
 
 def _norm(s):
     return " ".join(str(s).strip().lower().replace("-", " ").split())
+
+
+def _strlist(blob):
+    """把模型返回的「一串名字」归一成 [str]，任何形状都不许把产线弄崩。
+
+    视觉模型不是稳定 API：要 ["a","b"] 时它可能回 "a, b"、[{"name":"a"}]、
+    甚至 [["a","支架"]]。原来这些字段直接进 ", ".join(...)，遇到 dict 就
+    TypeError —— 一次格式抖动 = 这一单交付不出来。宁可名字取得糙一点。
+    """
+    if blob in (None, "", [], {}):
+        return []
+    if isinstance(blob, str):
+        parts = re.split(r"[,;、；]", blob)
+        return [p.strip() for p in parts if p.strip()]
+    if isinstance(blob, dict):
+        blob = list(blob.values())
+    if not isinstance(blob, (list, tuple, set)):
+        return [str(blob).strip()]
+    out = []
+    for x in blob:
+        if isinstance(x, str):
+            s = x.strip()
+        elif isinstance(x, dict):
+            s = next((str(x[k]).strip() for k in ("name", "element", "object",
+                                                  "label", "名称")
+                      if isinstance(x.get(k), str)), "")
+            if not s and len(x) == 1:
+                s = str(list(x.values())[0]).strip()
+        elif isinstance(x, (list, tuple)) and x:
+            s = str(x[0]).strip()
+        else:
+            s = str(x).strip()
+        if s:
+            out.append(s)
+    return out
+
 
 # 同类词库兜底：G0 漏标 similar_pairs 时，靠关键词把同族物品折叠成一枚。
 # 简化成扁平剪纸后，同族物品的轮廓几乎无法区分，并排放就是肉眼可见的重复。
@@ -467,15 +708,90 @@ COMPOSITE_REPLACE = {
     "speaker stand": "speaker", "music stand": "sheet music",
 }
 
-def _decompose(name):
-    """把成套装备换成单件；返回 (替换后名称, 是否发生替换)"""
+def _pairs_from(blob):
+    """把模型给的「整体→单件」映射归一成 [(whole, part)]，容忍各种返回形状。
+
+    为什么要这么宽松（2026-09-01 离线冒烟实测踩到）：prompt 里要的是
+    `[["A","B"]]`，但视觉模型完全可能回 `{"A": "B"}`、
+    `[{"whole":"A","part":"B"}]` 或者 `["A -> B"]`。原来的实现直接
+    `list + list`，模型回 dict 时抛 TypeError，**整条产线在 G0 之后当场崩掉**
+    —— 一个格式抖动就让订单交付不出来，比漏判严重得多。
+    解析不了的形状一律忽略（返回空），让上层退回词库和通用中心词规则，
+    这是「失败可收敛」而不是「失败即崩」。
+    """
+    out = []
+    if not blob:
+        return out
+    if isinstance(blob, dict):
+        return [(k, v) for k, v in blob.items() if isinstance(v, str)]
+    if isinstance(blob, str):
+        blob = [blob]
+    if not isinstance(blob, (list, tuple)):
+        return out
+    for item in blob:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            out.append((item[0], item[1]))
+        elif isinstance(item, dict):
+            # 键名不固定，取「第一个像整体的」和「第一个像单件的」
+            whole = next((item[k] for k in ("whole", "object", "composite",
+                                            "name", "from", "整体")
+                          if isinstance(item.get(k), str)), None)
+            part = next((item[k] for k in ("part", "representative_part",
+                                          "replacement", "to", "单件")
+                         if isinstance(item.get(k), str)), None)
+            if whole is None and part is None and len(item) == 1:
+                (whole, part), = item.items()
+            if isinstance(whole, str) and isinstance(part, str):
+                out.append((whole, part))
+        elif isinstance(item, str):
+            for sep in ("->", "→", "=>", ":", "：", "|"):
+                if sep in item:
+                    a, b = item.split(sep, 1)
+                    out.append((a, b))
+                    break
+    return [(a, b) for a, b in out if isinstance(a, str) and isinstance(b, str)]
+
+
+def composite_map(info):
+    """把 G0 / 目视质检给出的 composite_parts 归一成 {整体: 单件}。
+
+    这是「不靠词库」的那一层：COMPOSITE_REPLACE 只覆盖生日/演出那几张照片长出来的
+    13 项，遇到 lego set / blind box / gachapon machine 之类新品类必然漏判。
+    模型每轮都会被问「这个物体是否由多个可独立成立的部件组成，若是给出最有代表性的
+    那一个」，答案就落在这里，优先级排在通用中心词规则之前、词库之后。
+    """
+    out = {}
+    for whole, part in (_pairs_from(info.get("composite_parts"))
+                        + _pairs_from(info.get("_composite_parts"))):
+        whole, part = _norm(whole), str(part).strip()
+        if whole and part and _norm(part) != whole:
+            out[whole] = part
+    return out
+
+
+def _decompose(name, model_map=None):
+    """把成套装备换成单件；返回 (替换后名称, 是否发生替换)。
+
+    三层，依次尝试 —— 词库是先验，模型和通用规则负责新品类：
+      ① COMPOSITE_REPLACE 词库（最准，实拍验证过的 13 项）
+      ② 视觉模型给出的 composite_parts（G0 或目视质检问出来的）
+      ③ 通用中心词规则：中心词是「成套/支撑结构」类词（kit/set/rig/stand/…）就去掉它，
+         lego set → lego、model kit → model、luggage cart → luggage。
+         宁可名字变粗糙，也不要把一整套带支架的东西丢给生图模型。
+    """
     n = _norm(name)
     if n in COMPOSITE_REPLACE:
         return COMPOSITE_REPLACE[n], True
     for k, v in COMPOSITE_REPLACE.items():
         if n.endswith(" " + k) or n == k:
             return v, True
+    if model_map and n in model_map:
+        return model_map[n], True
+    words = n.split()
+    if len(words) > 1 and words[-1] in COMPOSITE_HEADS:
+        return " ".join(words[:-1]), True
     return name, False
+
 
 
 def _singular(word):
@@ -534,24 +850,71 @@ def _family(name):
     return None
 
 
-def select_objects(info, n_obj):
+def _rank_ctx(info):
+    """选品排序需要的两份上下文：纪念物集合 + G0 标注的随身物集合。"""
+    cmap = composite_map(info)
+    keep = {_norm(_decompose(x, cmap)[0]) for x in info.get("keepsake_objects") or []}
+    carried = {_norm(x) for x in info.get("carried_items") or []}
+    return keep, carried
+
+
+def _rank_of(name, keep=(), carried=()):
+    """选品优先级档（越小越先选）：
+
+      0  ⭐ 随身物 / 消耗品 / 自然物 —— 「那天你带着的东西」，零 IP 风险且最有记忆点
+      1  纪念物（G0 keepsake）
+      2  普通物品
+      3  古建筑本体（公共领域，可画，但不如随身物；现代地标已在入池阶段剔除）
+      4  文字依赖件（去字后只剩空色块，垫底，仅候选不足时启用）
     """
-    从 G0 清单里挑出 n_obj 个【互不重复、互不包含】的物品。
+    if _text_dependent(name):
+        return 4
+    if _carry_item(name) or _norm(name) in set(carried):
+        return 0
+    if _norm(name) in set(keep):
+        return 1
+    if _ancient_arch(name):
+        return 3
+    return 2
+
+
+def select_objects(info, n_obj, banned=None):
+    """
+    从 G0 清单里挑出 n_obj 个【互不重复、互不包含、IP 合规】的物品。
 
     取代旧的 objs[:n_obj] —— 旧写法有三个致命缺陷，已在实拍中全部复现：
       1. 纪念物被截断：生日照的 "candle" 排第 7，直接被切掉；
       2. 容器重复：cheesecake 与 plate 同时入选，蛋糕自带盘子 → 两枚重叠；
       3. 同族重复：electric guitar 与 bass guitar 同时入选 → 看起来是两把吉他。
+
+    banned = 已被判定「不可收敛 / 不合规」的物体名集合（ConvergenceGuard 传入），
+    永久剔除，回填层也不会把它们放回来 —— 否则换元素等于没换。
     返回 (picked, dropped_log)
     """
+    banned = {_norm(b) for b in (banned or [])}
+    cmap = composite_map(info)
     objs, seen, dropped = [], set(), []
+    # G0 自己标出来的违规项也并进硬剔除集合（模型判断 > 词表，覆盖词库没有的新品类）
+    model_flag = {}
+    for x in info.get("ip_items") or []:
+        model_flag[_norm(x)] = "🔴 IP 硬禁止（G0 标注为第三方 IP / 商标 / 吉祥物 / 文创设计）"
+    for x in info.get("modern_landmark_items") or []:
+        model_flag[_norm(x)] = "🔴 现代地标建筑本体（G0 标注为受著作权保护的建筑作品）"
     for o in info.get("standalone_objects") or []:
-        o2, changed = _decompose(o)
+        o2, changed = _decompose(o, cmap)
         if changed:
             dropped.append("%s → 改用单件 %s（整套装备带支架细杆，模切做不了）" % (o, o2))
         k = _norm(o2)
-        if k and k not in seen:
-            seen.add(k); objs.append(o2)
+        if not k or k in seen:
+            continue
+        reason = _ip_reason(o2) or model_flag.get(k) or model_flag.get(_norm(o))
+        if reason:
+            dropped.append("%s（%s，一枚都不出）" % (o2, reason))
+            continue
+        if k in banned:
+            continue
+        seen.add(k); objs.append(o2)
+
 
     # ① 容器剔除：A 盛放在 B 上时，两者只留一个。
     #
@@ -561,7 +924,7 @@ def select_objects(info, n_obj):
     #    整单最重要的纪念物没了，比留一个空盘子还糟。
     #    所以要比「价值」：容器词最低，纪念物最高；两个都是纪念物时丢里层
     #    （蜡烛本来就画在蛋糕上，蛋糕带蜡烛才是那枚经典图案）。
-    _keepset = {_norm(_decompose(x)[0]) for x in info.get("keepsake_objects") or []}
+    _keepset = {_norm(_decompose(x, cmap)[0]) for x in info.get("keepsake_objects") or []}
 
     def _value(name):
         if _words(name) & CONTAINER_WORDS:
@@ -600,19 +963,18 @@ def select_objects(info, n_obj):
                 explicit.add(_norm(loser))
                 dropped.append("%s（与同族物品轮廓雷同）" % loser)
 
-    # ③ 排序：纪念物置顶 → 普通物品 → 「去字后只剩空色块」的低价值件垫底。
+    # ③ 排序：⭐随身物置顶 → 纪念物 → 普通物品 → 古建筑本体 → 「去字后只剩空色块」的低价值件垫底。
+    #    为什么随身物在最前（2026-09-01 客户 IP 策略）：「那天你带着的东西」（门票/地图/水壶/
+    #    背包/帽子/冰淇淋/落叶/合影）既没有任何 IP 风险，又比地标建筑更能唤起当天的记忆。
+    #    古建筑本体（城墙/古塔/飞檐/石狮）属公共领域可以画，但只排在普通物品之后 ——
+    #    现代地标建筑本体已在入池阶段硬剔除，根本走不到排序。
     #    垫底而不是删除：有更好的候选就轮不到它们；候选不够时它们仍是兜底来源。
-    #    低价值判定优先于纪念物判定 —— G0 有时会把匾额/横幅标成纪念物，
+    #    低价值判定优先于其它判定 —— G0 有时会把匾额/横幅标成纪念物，
     #    但合规要求必须去字，去完还是一块空色块，所以以「去字后还剩什么」为准。
-    keep = [k for k in (_norm(_decompose(x)[0]) for x in info.get("keepsake_objects") or [])
+    keep = [k for k in (_norm(_decompose(x, cmap)[0]) for x in info.get("keepsake_objects") or [])
             if k in seen]
-
-    def _rank(o):
-        if _text_dependent(o):
-            return 2
-        return 0 if _norm(o) in keep else 1
-
-    objs.sort(key=_rank)
+    carried = {_norm(x) for x in info.get("carried_items") or []}
+    objs.sort(key=lambda o: _rank_of(o, keep, carried))
 
     picked, used_fam = [], set()
     for o in objs:
@@ -675,10 +1037,10 @@ def select_objects(info, n_obj):
     return picked, dropped
 
 
-def build_prompt(info, n, patches=None, figure_style="collage", exclude=None):
+def build_prompt(info, n, patches=None, figure_style="collage", exclude=None, banned=None):
     night = info.get("lighting") == "night"
     n_obj, n_ppl = plan_mix(info, n)
-    picked, _dropped = select_objects(info, n_obj)
+    picked, _dropped = select_objects(info, n_obj, banned)
     n_ppl = n - len(picked)
     thin = info.get("thin_parts") or ["cables", "wires", "thin lower poles of stands", "strings"]
     ip = info.get("ip_items") or ["any brand logo or wordmark"]
@@ -697,12 +1059,15 @@ def build_prompt(info, n, patches=None, figure_style="collage", exclude=None):
     parts += [
         THICKNESS % ", ".join(thin),
         COMPLIANCE % ", ".join(ip),
+        IP_POLICY,
+        NO_SUPPORT_RIG,
         COMPOSITION % {"n": n, "nobj": len(picked), "nppl": n_ppl,
                        "objs": "; ".join('"%s"' % o for o in picked)},
     ]
     # 纪念物保护：只对本次真正入选的 keepsake 生效
     _pk = {_norm(o) for o in picked}
-    keepsakes = [k for k in (_decompose(x)[0] for x in info.get("keepsake_objects") or [])
+    keepsakes = [k for k in (_decompose(x, composite_map(info))[0]
+                             for x in info.get("keepsake_objects") or [])
                  if _norm(k) in _pk]
     if keepsakes:
         parts.append(KEEPSAKE % ", ".join('"%s"' % k for k in keepsakes))
@@ -749,7 +1114,7 @@ def build_scene_prompt(info, figure_style="collage"):
                       else FIGURE_COLLAGE) % cols_fig)
     else:
         parts.append(NO_FIGURE)
-    parts += [COMPLIANCE % ", ".join(ip), SCENE_OUTPUT, SCENE_NEGATIVE, STYLE_REMINDER]
+    parts += [COMPLIANCE % ", ".join(ip), IP_POLICY, SCENE_OUTPUT, SCENE_NEGATIVE, STYLE_REMINDER]
     return "\n\n".join(parts)
 
 # ── 步骤 3：生成 ───────────────────────────────────────────────────────────
@@ -841,6 +1206,17 @@ VISUAL_TASK = """你是定制贴纸的印前质检员。这是一张贴纸排版
   "duplicate_pairs": [["A","B"]], // 【重复检查】画面中任意两枚贴纸，如果画的是同一个物品、或同族物品（两把吉他、两个鼓、两个杯子）、
                                   // 或简化后轮廓几乎一样，就把这一对写进来。没有则空数组
   "objects_with_container": ["..."], // 【容器检查】哪些纯物品贴纸里除了物品本体，还画进了它下面的盘子/托盘/桌面/支架/底座。没有则空数组
+  "elements_with_support_rig": ["..."], // 【通用支架检查·不看清单只看画面】逐枚判断：这枚元素里是否包含【与主体无关的支撑结构】
+                                  // —— 支架、三脚架、立杆、挂架、托架、底座板、吊钩、货架、桌面。
+                                  // 只要有，就把这枚元素的名字写进来。没有则空数组。
+                                  // ⚠️ 物体自身固有的部分不算（杯子的把手、相机的镜头、蛋糕自带的小盘子都不算）
+  "composite_elements": [["A","B"]], // 【通用复合体检查】逐枚判断：这枚元素 A 是否由【多个可独立成立的部件】组成
+                                  // （一整套器材、一堆零件、机器+产出物）。若是，B 填其中最有代表性、
+                                  // 最厚实、能单独成立的那一个部件。不是复合体就不要写。没有则空数组
+  "banned_ip_or_landmark": ["..."], // 【IP 合规复检】画面中是否出现：卡通吉祥物/玩偶/手办/盲盒形象、主题乐园元素、
+                                  // 文创商品原创设计、商标字标或品牌名，或【现代地标建筑本体】
+                                  // （体育场馆/摩天楼/电视塔/会展中心/歌剧院/商场/城市天际线）。
+                                  // 有就写出来。⚠️ 古建筑本体（城墙/古塔/飞檐/石狮/亭子）和自然景观不算违规，不要写
   "missing_objects": ["..."],     // 【缺失检查】下面这份清单里，哪些物品在画面中【完全找不到对应贴纸】：%(expect)s
                                   // 只填确实没画的。名称照抄清单里的英文
   "readable_text_or_logo": true/false,
@@ -932,8 +1308,9 @@ def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expe
                      % (str(d.get("text_note") or "").strip() or "视觉模型未写明内容"))
     if d.get("scenery_inside_object_stickers"):
         fails.append("纯物品贴纸里混进了背景场景，物品贴纸必须只有物品本体")
-    if d.get("thin_parts"):
-        fails.append("以下结构仍过细，必须加粗（禁止删除物品本体）：%s" % ", ".join(d["thin_parts"]))
+    _thin = _strlist(d.get("thin_parts"))
+    if _thin:
+        fails.append("以下结构仍过细，必须加粗（禁止删除物品本体）：%s" % ", ".join(_thin))
     # 重复 / 容器 / 缺失 —— 定向重试，不合格必须重出
     dup = [p for p in (d.get("duplicate_pairs") or [])
            if isinstance(p, (list, tuple)) and len(p) == 2]
@@ -947,7 +1324,7 @@ def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expe
     #   (c) 物品下面拖着桌面/地面/舞台这类大面积承载物 —— 贴纸剪不出来，判废。
     _BIG_SURFACES = {"table", "tabletop", "desk", "counter", "floor", "ground",
                      "stage", "surface", "shelf", "wall"}
-    with_c = [c for c in (d.get("objects_with_container") or []) if str(c).strip()]
+    with_c = _strlist(d.get("objects_with_container"))
     if with_c:
         big = [c for c in with_c if _words(c) & _BIG_SURFACES]
         if big:
@@ -958,13 +1335,238 @@ def qc_visual(png, workdir, n, n_obj, tag, n_ppl=1, figure_style="collage", expe
         # 早期版本在这里补了一刀，结果视觉模型每轮都把「蛋糕连着自己的小盘子」
         # 报成容器问题，三轮全废 —— 判废的恰恰是参考稿里最好看的那版。
         # 真正的重复交给 duplicate_pairs 兜，这里只管大面积承载物。
-    miss = [m for m in (d.get("missing_objects") or []) if str(m).strip()]
+    # 通用支架复检（不依赖词库）：词表永远追不上新品类（drum kit / mic stand / 扭蛋机 /
+    # 乐高展台…），所以直接问模型「这枚元素里有没有与主体无关的支撑结构」。
+    rig = _strlist(d.get("elements_with_support_rig"))
+    if rig:
+        fails.append("以下元素画进了与主体无关的支撑结构（支架/立杆/托架/底座板/挂架）：%s。"
+                     "模切剪不出这种结构，必须只画物体本体，让它单独悬空呈现"
+                     % ", ".join(rig))
+    # 通用复合体复检：问出「最有代表性的那个部件」，下一轮直接改画该部件，
+    # 不再靠 COMPOSITE_REPLACE 词库覆盖。成对结果会被主流程回填进 info["_composite_parts"]。
+    comp = [(a.strip(), b.strip()) for a, b in _pairs_from(d.get("composite_elements"))
+            if a.strip() and b.strip()]
+    if comp:
+        fails.append("以下元素是由多个部件组成的复合体，贴纸做不了，必须改画成括号里那一个单件：%s"
+                     % "、".join("%s（改画 %s）" % (p[0], p[1]) for p in comp))
+    # IP 合规复检：选品阶段已硬剔除，但生图模型会自己把地标/吉祥物补进画面
+    bad_ip = _strlist(d.get("banned_ip_or_landmark"))
+    if bad_ip:
+        fails.append("出现 IP 合规禁止内容：%s。卡通吉祥物/玩偶/主题乐园元素/文创设计/商标字标、"
+                     "以及现代地标建筑本体（体育场馆/摩天楼/电视塔/商场/天际线）一律不许画；"
+                     "改画随身物品（门票/地图/水壶/背包/帽子/食物/落叶）或自然景观、古建筑构件"
+                     % ", ".join(bad_ip))
+    miss = _strlist(d.get("missing_objects"))
     if miss:
         fails.append("以下指定物品没有画出来：%s。这些是顾客照片里的纪念物，必须补画成独立贴纸；"
                      "若因为太细而被省略，请加粗放大后重画，不得用其它物品替代"
                      % ", ".join(miss))
     d["fails"] = fails
     return d
+
+# ── 收敛保证（R2）─────────────────────────────────────────────────────────
+# 红队 R2：CHANGELOG 的 drum kit 案例里，整套架子鼓同时触发「结构过细」和
+# 「自带支架」两条【互斥】质检 —— 一条要求加粗保留，另一条要求整体去掉。
+# 原实现只会把两条 fail 原样喂回模型再画一次，4 轮全败，永远交付不出来。
+#
+# 结论：靠继续堆词库不可能收敛，必须让【失败可收敛】成为结构性保证：
+#   同一物体撞墙两次 → 永久剔除并换候选；一轮内撞上互斥规则 → 立刻换，不等第二轮；
+#   谁都归因不出来但整组连续失败 → 主动换掉优先级最低那枚，绝不空转。
+FAIL_TAGS = (
+    ("too_thin", ("仍过细", "结构过细", "必须加粗", "太细")),
+    ("support_rig", ("支撑结构", "大面积承载物", "支架", "底座")),
+    ("composite", ("复合体", "改用单件", "改画成括号里")),
+    ("ip", ("IP 合规禁止内容", "可读文字或品牌标识", "品牌标识")),
+    ("duplicate", ("重复元素", "轮廓雷同")),
+    ("missing", ("没有画出来",)),
+)
+# 互斥规则对：同一物体同时命中其中一对，就说明这枚元素本身不可能同时满足两条规则，
+# 原地重试是纯粹的浪费（这正是 drum kit 4 轮全败的成因）。
+CONTRADICTORY_TAG_PAIRS = (
+    {"too_thin", "support_rig"},   # 「加粗这些细杆」vs「这些细杆整个去掉」
+    {"too_thin", "composite"},     # 「加粗保留」vs「整体换成单件」
+    {"missing", "ip"},             # 「必须补画这枚」vs「这枚一律不许画」
+    {"missing", "support_rig"},    # 「必须补画」vs「它只剩支架可画」
+)
+
+
+def fail_tags(text):
+    """把一条质检不合格文案归类成规则标签集合。用于判断互斥与连续失败。"""
+    t = str(text)
+    return {tag for tag, keys in FAIL_TAGS if any(k in t for k in keys)}
+
+
+def objects_in_fail(text, names):
+    """这条 fail 涉及哪些候选物体。
+
+    质检文案里嵌的是英文物体名（视觉模型原样回填），所以先整名匹配，
+    再退回用【中心词】匹配（模型常把 "bass drum" 写成 "drum"）。
+    中心词要求 ≥4 字符，避免 "cup"/"bag" 这类短词在长文案里乱命中。
+    """
+    low = " %s " % _norm(text)
+    hit = []
+    for nm in names:
+        k = _norm(nm)
+        if not k:
+            continue
+        if (" %s " % k) in low or k in low:
+            hit.append(nm); continue
+        head = k.split()[-1]
+        if len(head) >= 4 and ((" %s " % head) in low or (" %ss " % head) in low):
+            hit.append(nm)
+    return hit
+
+
+def candidate_pool(info, banned=None):
+    """全部【合法且未被剔除】的候选物体（已拆解、已过 IP 硬禁止、已去重）。
+
+    收敛判断要用它：只有池子里还有没试过的物体，换元素才有意义。
+    """
+    banned = {_norm(b) for b in (banned or [])}
+    cmap = composite_map(info)
+    flags = {_norm(x) for x in _strlist(info.get("ip_items"))}
+    flags |= {_norm(x) for x in _strlist(info.get("modern_landmark_items"))}
+    out, seen = [], set()
+    for o in info.get("standalone_objects") or []:
+        o2, _ = _decompose(o, cmap)
+        k = _norm(o2)
+        if not k or k in seen or k in banned:
+            continue
+        if _ip_reason(o2) or k in flags or _norm(o) in flags:
+            continue
+        seen.add(k); out.append(o2)
+    return out
+
+
+class ConvergenceGuard:
+    """让「失败」一定收敛的看门人。
+
+    用法（main 里每轮质检之后调一次）：
+        picked, logs, evicted = guard.after_round(picked, fails, visual_json)
+
+    三条规则：
+      R-a 同一物体连续 strikes(默认 2) 轮触发质检失败 → 永久剔除，换下一个候选；
+      R-b 同一物体在一轮内同时触发互斥规则 → 立即剔除，不等第二轮；
+      R-c 一轮下来归因不到任何物体、但同一组元素已连续失败 → 换掉优先级最低那枚。
+    保证：只要候选池还有没试过的物体，就绝不会出现「max-rounds 跑完仍是同一组失败元素」。
+    只有池子真的见底时才会保持原组重试（此时换也没得换，日志会明说）。
+    """
+
+    def __init__(self, info, n_obj, strikes=2):
+        self.info = info
+        self.n_obj = n_obj
+        self.strikes = strikes
+        self.banned = []          # 有序，报告里按剔除顺序展示
+        self.strike = {}          # _norm(name) → 连续触发失败的轮数
+        self.combo_fails = 0      # 同一组元素连续失败的轮数
+        self.last_combo = None
+        self.events = []          # [{round, object, reason, replaced_by}]
+        self.round = 0
+
+    # 内部：优先级最低的那一枚（文字依赖件 > 古建筑 > 普通 > 纪念物 > 随身物）
+    def _lowest(self, picked):
+        keep, carried = _rank_ctx(self.info)
+        ranked = sorted(picked, key=lambda o: (-_rank_of(o, keep, carried),
+                                               -picked.index(o)))
+        return ranked[0] if ranked else None
+
+    def _has_spare(self, picked):
+        cur = {_norm(p) for p in picked}
+        return any(_norm(c) not in cur for c in candidate_pool(self.info, self.banned))
+
+    def after_round(self, picked, fails, visual=None):
+        """返回 (新的 picked, 日志行, 本轮被剔除的物体名)。"""
+        self.round += 1
+        logs = []
+        if not fails:
+            return picked, logs, []
+
+        # ① 视觉模型这一轮给出的复合体拆解直接吃进 info：下一轮 _decompose 就会用上，
+        #    这是「不靠词库」处理新品类的关键一步（lego set → lego brick 等）。
+        map_changed = False
+        for whole, part in _pairs_from((visual or {}).get("composite_elements")):
+            if str(whole).strip() and str(part).strip():
+                self.info.setdefault("_composite_parts", []).append([whole, part])
+                map_changed = True
+                logs.append("复合体拆解（视觉模型判定，非词库）：%s → 下一轮改画单件 %s"
+                            % (whole, part))
+
+        # ② 归因：每条 fail 属于哪几条规则、涉及哪些物体
+        tagmap = {}
+        for f in fails:
+            tags = fail_tags(f)
+            if not tags:
+                continue                      # 全局项（色板/边框/枚数）不归因到物体
+            for o in objects_in_fail(f, picked):
+                tagmap.setdefault(o, set()).update(tags)
+
+        evict = []
+        for o in picked:
+            k = _norm(o)
+            tags = tagmap.get(o) or set()
+            if not tags:
+                self.strike.pop(k, None)      # 「连续」的语义：本轮没事就清零
+                continue
+            clash = next((pair for pair in CONTRADICTORY_TAG_PAIRS if pair <= tags), None)
+            self.strike[k] = self.strike.get(k, 0) + 1
+            if clash:
+                evict.append((o, "一轮内同时触发互斥规则（%s），原地重试不可能收敛"
+                                 % " + ".join(sorted(clash))))
+            elif self.strike[k] >= self.strikes:
+                evict.append((o, "连续 %d 轮不收敛（%s）"
+                                 % (self.strike[k], "、".join(sorted(tags)))))
+
+        # ③ 全局收敛兜底：这一组已经连续失败，却归因不到任何物体 → 也要换，不许空转
+        combo = tuple(sorted(_norm(o) for o in picked))
+        self.combo_fails = self.combo_fails + 1 if combo == self.last_combo else 1
+        self.last_combo = combo
+        if not evict and self.combo_fails >= self.strikes:
+            v = self._lowest(picked)
+            if v:
+                evict.append((v, "同一组元素已连续 %d 轮不合格且无法归因到具体物体，"
+                                 "主动换元素避免空转" % self.combo_fails))
+
+        if not evict:
+            # 没有要剔除的，但模型给了新的复合体拆解 → 元素名会变（lego set → lego brick），
+            # 必须把 picked 重算一遍，否则 main 手里的清单和 prompt 里的不一致
+            if map_changed:
+                new_picked, _d = select_objects(self.info, self.n_obj, self.banned)
+                if [_norm(x) for x in new_picked] != [_norm(x) for x in picked]:
+                    return new_picked, logs, []
+            return picked, logs, []
+
+        # ④ 池子见底时不做剔除：换不出替补还硬剔，只会让整版少一枚（枚数是硬约束）
+        if not self._has_spare(picked):
+            logs.append("⚠️ 候选池已用尽（%d 个候选全试过或全被剔除），"
+                        "无法换元素，只能在现有元素上继续重试：%s"
+                        % (len(candidate_pool(self.info)),
+                           "；".join("%s —— %s" % (o, why) for o, why in evict)))
+            return picked, logs, []
+
+        before = {_norm(p) for p in picked}
+        for o, _why in evict:
+            self.banned.append(o)
+            self.strike.pop(_norm(o), None)
+        new_picked, _dropped = select_objects(self.info, self.n_obj, self.banned)
+        added = [p for p in new_picked if _norm(p) not in before]
+        for i, (o, why) in enumerate(evict):
+            rep = added[i] if i < len(added) else None
+            if rep:
+                logs.append("物体 %s %s，已替换为 %s" % (o, why, rep))
+            else:
+                logs.append("物体 %s %s，已永久剔除（本轮没有同级替补可换）" % (o, why))
+            self.events.append({"round": self.round, "object": o,
+                                "reason": why, "replaced_by": rep})
+        self.combo_fails = 0
+        self.last_combo = tuple(sorted(_norm(o) for o in new_picked))
+        return new_picked, logs, [o for o, _ in evict]
+
+    def drop_stale_patches(self, fails, evicted):
+        """被换掉的物体对应的重试指令要一起丢掉，否则会让模型去修一枚已经不存在的元素。"""
+        if not evicted:
+            return list(fails)
+        return [f for f in fails if not objects_in_fail(f, evicted)]
+
 
 # ── 主流程 ────────────────────────────────────────────────────────────────
 
@@ -982,7 +1584,17 @@ def main():
     ap.add_argument("--figure-style", choices=["collage", "silhouette"], default="collage",
                     help="人物画法：collage=分色剪纸拼贴（有肤色/衣服色，无脸，默认）；"
                          "silhouette=单色深色剪影")
-    ap.add_argument("--dpi", type=int, default=400, help="重排后成品分辨率")
+    # 默认值取 providers.TARGET_DPI（那边由「mm ÷ 25.4 × dpi」公式推导，见 R3 注释），
+    # 这里不再各写一个 400 —— 两处魔数早晚会不一致。
+    ap.add_argument("--dpi", type=int, default=providers.TARGET_DPI,
+                    help="重排后成品分辨率，默认 %d（provider 达不到时自动降级到 %d 并标注）"
+                         % (providers.TARGET_DPI, providers.FALLBACK_DPI))
+    ap.add_argument("--skip-selftest", action="store_true",
+                    help="跳过跑图前的 provider 自检（不建议；自检不花钱）")
+    ap.add_argument("--selftest-offline", action="store_true",
+                    help="自检时跳过联网检查（内网/代理环境）")
+    ap.add_argument("--strikes", type=int, default=2,
+                    help="同一物体连续几轮触发质检失败就永久剔除并换候选（收敛保证，默认 2）")
     ap.add_argument("--objects", default=None,
                     help="显式指定这一批要画的物品清单（分号分隔），跳过 G0 自动选物。"
                          "供 forge_a3.py 分批调度使用，保证 4 批之间不重复")
@@ -1001,6 +1613,37 @@ def main():
     log("provider: %s  |  人物画法: %s" % (providers.describe(), a.figure_style))
     log("═" * 66)
 
+    # ── R3/R1：跑图前的启动期自检（不消耗任何生图额度）────────────────────
+    # ① 能力/余量表：各 provider 像素能力 vs 400/300dpi 需求，一眼看到还有多少余量
+    # ② 链路自检 fail-fast：缺 key / base_url 不通 / 模型 ID 对不上 / 请求体不合法
+    #    → 直接退出，不要跑到第 3 轮才 404
+    log("\n【自检】provider 能力与链路（不花钱）")
+    log(providers.capability_table(a.dpi))
+    if a.preflight_only or a.skip_selftest:
+        log("  （已跳过链路自检：%s）"
+            % ("--preflight-only 不会生图" if a.preflight_only else "--skip-selftest"))
+    else:
+        code = providers.print_selftest(
+            offline=True if a.selftest_offline else None, requested_dpi=a.dpi)
+        if code != 0:
+            log("\n❌ provider 自检不通过，已在生图前停止（未消耗任何生成额度）。")
+            return 3
+
+    # 分辨率能力探测 → 显式降级：达不到 400dpi 就按 300dpi 交付并全程标注，
+    # 绝不静默插值假装 400dpi（那是唯一一类「所有自动检查全过、实物不能用」的失败）
+    plan = providers.dpi_plan(requested_dpi=a.dpi)
+    dpi = plan.get("dpi") or a.dpi
+    if plan.get("dpi") is None:
+        log("  🔴 %s" % plan.get("reason"))
+        if not a.preflight_only:
+            return 3
+    elif plan.get("degraded"):
+        log("  🟡 分辨率降级：本单按 %d dpi 交付（请求 %d dpi）。原因：%s"
+            % (dpi, a.dpi, plan.get("reason")))
+        log("     ⚠️ 300dpi 对不干胶模切可接受，但交付说明与对客沟通里必须写明本单为 %d dpi。" % dpi)
+    else:
+        log("  ✅ 分辨率：本单按 %d dpi 交付" % dpi)
+
     # G0
     log("\n【G0】照片体检 + 场景解析")
     info, small = preflight(a.photo, work)
@@ -1012,6 +1655,9 @@ def main():
     log("  可独立物品 : %s" % ", ".join(info.get("standalone_objects", [])))
     log("  纤细件     : %s" % (", ".join(info.get("thin_parts", [])) or "无"))
     log("  第三方 IP  : %s" % (", ".join(info.get("ip_items", [])) or "无"))
+    log("  现代地标    : %s（受著作权保护的建筑作品，本体一律不画）"
+        % (", ".join(info.get("modern_landmark_items") or []) or "无"))
+    log("  ⭐随身物    : %s" % (", ".join(info.get("carried_items") or []) or "（G0 未标，按词库判定）"))
 
     # 分批调度：用外部指定的物品清单覆盖自动选物，并可强制本批不出人物
     if a.objects:
@@ -1056,11 +1702,13 @@ def main():
         return 0
 
     patches, history = [], []
+    guard = ConvergenceGuard(info, n_obj, strikes=max(1, a.strikes))
     for rnd in range(1, a.max_rounds + 1):
         log("\n【第 %d 轮】生成 → %s双重质检"
             % (rnd, "" if a.no_relayout else "程序化重排 → "))
         prompt = build_prompt(info, a.elements, patches, a.figure_style,
-                              [e.strip() for e in a.exclude.split(';') if e.strip()] if a.exclude else None)
+                              [e.strip() for e in a.exclude.split(';') if e.strip()] if a.exclude else None,
+                              banned=guard.banned)
         with open(os.path.join(a.outdir, "prompt_round%d.txt" % rnd), "w",
                   encoding="utf-8") as f:
             f.write(prompt)
@@ -1070,7 +1718,7 @@ def main():
         # 排版交给代码，不交给模型。重排失败才退回模型原图。
         sheet, rmeta = png, {}
         if not a.no_relayout:
-            rp, rmeta, rlog = do_relayout(png, a.outdir, str(rnd), a.gap, a.margin, a.dpi)
+            rp, rmeta, rlog = do_relayout(png, a.outdir, str(rnd), a.gap, a.margin, dpi)
             if rp:
                 sheet = rp
                 log("  重排 : %s → %s 枚，%s列×%s行，实测最小邻距 %.2fmm / 最小边距 %.2fmm"
@@ -1086,7 +1734,7 @@ def main():
         v = qc_visual(sheet, work, a.elements, n_obj, str(rnd), n_ppl, a.figure_style,
                       expected=picked)
         log("  目视 : 共 %s 枚 | 纯物品 %s 枚 (%s)"
-            % (v.get("n_elements"), v.get("n_object_only"), ", ".join(v.get("object_names", [])[:8])))
+            % (v.get("n_elements"), v.get("n_object_only"), ", ".join(_strlist(v.get("object_names"))[:8])))
 
         fails = q["fails"] + v["fails"]
         history.append({"round": rnd, "png": os.path.basename(sheet),
@@ -1103,8 +1751,9 @@ def main():
                                   "--sheet-width", str(SHEET_WIDTH_MM),
                                   "--outdir", os.path.abspath(prod)],
                                  capture_output=True, text=True, cwd=os.path.dirname(DOCTOR))
-            write_report(a.outdir, info, history, rnd, True)
-            log("\n🎉 交付：%s（第 %d 轮通过）" % (final, rnd))
+            write_report(a.outdir, info, history, rnd, True, dpi=dpi, guard=guard)
+            log("\n🎉 交付：%s（第 %d 轮通过，%d dpi%s）"
+                % (final, rnd, dpi, "，⚠️ 已降级，交付说明须标注" if plan.get("degraded") else ""))
             # 这一步以前不看返回码：刀线导出失败时照样打印「生产文件：cutline.svg」，
             # 直到把不存在的文件发给工厂才发现。现在失败就明说。
             cut = os.path.join(prod, "cutline.svg")
@@ -1119,23 +1768,44 @@ def main():
 
         log("  🔴 不合格 %d 项：" % len(fails))
         for f in fails: log("     · %s" % f)
-        patches = fails
+
+        # ── 收敛保证：不允许拿着同一组失败元素把 max-rounds 跑光（红队 R2）──
+        new_picked, glogs, evicted = guard.after_round(picked, fails, v)
+        for gl in glogs:
+            log("  ♻️ 收敛 : %s" % gl)
+        patches = guard.drop_stale_patches(fails, evicted) if evicted else fails
+        if [_norm(x) for x in new_picked] != [_norm(x) for x in picked]:
+            picked = new_picked
+            n_obj, n_ppl = len(picked), a.elements - len(picked)
+            guard.n_obj = n_obj
+            log("  ♻️ 本版改为 : %s" % ", ".join(picked))
+            log("  ♻️ 版面构成 : %d 枚纯物品 + %d 枚含人物 = %d 枚" % (n_obj, n_ppl, a.elements))
+        history[-1]["picked"] = list(picked)
+        history[-1]["evicted"] = evicted
 
     log("\n❌ %d 轮仍未通过，不交付。见 qc_report.md" % a.max_rounds)
-    write_report(a.outdir, info, history, a.max_rounds, False)
+    write_report(a.outdir, info, history, a.max_rounds, False, dpi=dpi, guard=guard)
     return 2
 
-def write_report(outdir, info, history, rounds, passed):
+def write_report(outdir, info, history, rounds, passed, dpi=None, guard=None):
     L = ["# 质检报告\n",
-         "**结果**：%s（共 %d 轮）\n" % ("✅ 通过并交付" if passed else "🔴 未通过，未交付", rounds),
-         "## G0 照片体检\n",
-         "| 项 | 值 |", "|---|---|",
-         "| 场景 | %s |" % info.get("scene"),
-         "| 光线判定 | %s |" % info.get("lighting"),
-         "| 人数 | %s |" % info.get("people_count"),
-         "| 可独立物品 | %s |" % ", ".join(info.get("standalone_objects", [])),
-         "| 第三方 IP（已强制剔除） | %s |" % (", ".join(info.get("ip_items", [])) or "无"),
-         "\n## 逐轮结果\n"]
+         "**结果**：%s（共 %d 轮）\n" % ("✅ 通过并交付" if passed else "🔴 未通过，未交付", rounds)]
+    if dpi:
+        L.append("**交付分辨率**：%d dpi%s\n"
+                 % (dpi, "" if dpi >= providers.TARGET_DPI else
+                    "（⚠️ 已从 %ddpi 显式降级：provider 像素能力或尺寸配置不足。"
+                    "%ddpi 对不干胶模切可接受，但必须让模切店和客户知道）"
+                    % (providers.TARGET_DPI, dpi)))
+    L += ["## G0 照片体检\n",
+          "| 项 | 值 |", "|---|---|",
+          "| 场景 | %s |" % info.get("scene"),
+          "| 光线判定 | %s |" % info.get("lighting"),
+          "| 人数 | %s |" % info.get("people_count"),
+          "| 可独立物品 | %s |" % ", ".join(info.get("standalone_objects", [])),
+          "| 第三方 IP（已强制剔除） | %s |" % (", ".join(info.get("ip_items", [])) or "无"),
+          "| 现代地标建筑（已强制剔除） | %s |" % (", ".join(info.get("modern_landmark_items") or []) or "无"),
+          "| ⭐随身物（最高优先级） | %s |" % (", ".join(info.get("carried_items") or []) or "按词库判定"),
+          "\n## 逐轮结果\n"]
     for h in history:
         L.append("### 第 %d 轮 · %s\n" % (h["round"], h["png"]))
         r = h.get("relayout")
@@ -1151,13 +1821,26 @@ def write_report(outdir, info, history, rounds, passed):
                  % (q["dpi"], q["must_fix"], q["n_elem"], q["n_cut"], q["min_gap"]))
         v = h["visual"]
         L.append("- 目视：共 %s 枚，纯物品 %s 枚（%s）"
-                 % (v.get("n_elements"), v.get("n_object_only"), ", ".join(v.get("object_names", [])[:8])))
+                 % (v.get("n_elements"), v.get("n_object_only"), ", ".join(_strlist(v.get("object_names"))[:8])))
         if h["fails"]:
             L.append("- 🔴 不合格项：")
             L += ["  - %s" % f for f in h["fails"]]
         else:
             L.append("- ✅ 双重质检全过")
+        if h.get("evicted"):
+            L.append("- ♻️ 本轮换元素：剔除 %s" % ", ".join(h["evicted"]))
+        if h.get("picked"):
+            L.append("- 下一轮元素清单：%s" % ", ".join(h["picked"]))
         L.append("")
+    if guard is not None and (guard.events or guard.banned):
+        L.append("## 收敛过程（不可收敛检测）\n")
+        L.append("| 轮次 | 被永久剔除的物体 | 原因 | 替换为 |")
+        L.append("|---|---|---|---|")
+        for e in guard.events:
+            L.append("| %d | %s | %s | %s |"
+                     % (e["round"], e["object"], e["reason"], e.get("replaced_by") or "（无替补）"))
+        L.append("")
+        L.append("剩余候选池：%s\n" % (", ".join(candidate_pool(info, guard.banned)) or "已用尽"))
     with open(os.path.join(outdir, "qc_report.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(L))
 

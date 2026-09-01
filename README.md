@@ -3,12 +3,15 @@
 把一张现场照片，变成能直接送厂印刷模切的 A5 手账贴纸版。
 
 <p align="center">
-  <img src="examples/示例1_鸟巢_A5贴纸版.png" width="45%">
   <img src="examples/示例2_银杏_A5贴纸版.png" width="45%">
+  <img src="examples/示例4_银杏_卡纸打印图.png" width="45%">
 </p>
 
 输入：一张手机照片。
-输出：6 枚水粉剪纸拼贴风贴纸元素，排成 A5 版面，400dpi，带 `CutContour` 刀线图层，PDF / SVG / 单枚透明 PNG 一起给到数码模切店。
+输出：6 枚水粉剪纸拼贴风贴纸元素，排成 A5 版面，400dpi（生图模型像素能力不足时**显式降级到 300dpi 并在交付说明里标注**），带 `CutContour` 刀线图层，PDF / SVG / 单枚透明 PNG 一起给到数码模切店。
+
+> 原来的首图（含现代体育场馆建筑本体）已按 2026-09-01 收紧后的 IP 策略下架：
+> 现代地标建筑属受著作权保护的建筑作品，产线已不再画建筑本体，示例图自然也不该再放。
 
 ---
 
@@ -166,19 +169,34 @@ export FORGE_PROVIDER=openai
 export OPENAI_API_KEY=sk-xxx
 export OPENAI_IMAGE_SIZE=a5-300     # 1760x2480；a5-400 = 2336x3312
 
-# 换后端前先自检，不花生图钱也能查配置
-python3 memory-sticker-forge/tools/selftest_provider.py --all
+# 换后端前先自检。这两个入口都【不消耗生图额度】
+python3 memory-sticker-forge/providers.py --capabilities   # 像素能力 vs 400/300dpi 需求与余量表
+python3 memory-sticker-forge/providers.py --selftest       # key 格式 / 连通性 / 模型 ID / 请求体校验
+# 想连带实测视觉与生图（会花钱）：
+python3 memory-sticker-forge/tools/selftest_provider.py --all 你的照片.jpg
 ```
 
-> `gpt-image-2` 要求宽高是 16 的倍数、总像素 ≤8.29M。`a5-300` 档短边 1760px 只比门禁 1748px 高 12px，改尺寸时留意。
+`forge.py` 正式跑图前会自动跑一次自检（fail-fast），不通过直接退出，不会跑到一半才 404；`--skip-selftest` 可关。
+
+**provider 实测状态（如实标注，别猜）**
+
+| provider | 400dpi | 实测状态 |
+|---|---|---|
+| `openai` gpt-image-2 | ✅ 能力可达（需 `OPENAI_IMAGE_SIZE=a5-400`） | ⚠️ **从未真实调用过**（无 key） |
+| `volcengine` Seedream 4.0 | ❌ 总像素上限约 462 万，A5@400dpi 需 771 万 → 只能 300dpi | ⚠️ **从未真实调用过**；模型 ID 带日期后缀（如 `-250828`），报 `model not found` 时先去控制台抄最新 ID |
+| `gemini` 2.5 Flash Image | ❌ 分辨率不达标 | 仅建议用于视觉理解 |
+| `cmd` | 未知（能力无从登记） | 取决于你自己接的命令；真实分辨率由输出端门禁校验 |
+
+> `gpt-image-2` 要求宽高是 16 的倍数、总像素 ≤8.29M。`a5-300` 档短边 1760px，输出门禁是 1739px（= 300dpi 理论值 1748px × (1−0.5% 量化容差)），余量 21px；改尺寸时留意。
+> 达不到 400dpi 时产线**显式降级到 300dpi 并在日志、质检报告、模切店须知里标注**，不会静默插值成假 400dpi。
 
 ## 关键规格（改动前请先读）
 
 | 项 | 值 | 为什么 |
 |---|---|---|
 | 成品 | A5 148×210mm | 4 张拼 A3，印厂标准 |
-| 分辨率 | 400dpi = 2331×3307px | 300dpi 是底线 |
-| 生图最小短边 | 1748px | A5@300dpi 底线，低于此直接报错 |
+| 分辨率 | 400dpi = 2331×3307px | 由 `px_at(mm,dpi)=round(mm÷25.4×dpi)` 推导，不写魔数；达不到就显式降级到 300dpi 并标注 |
+| 生图最小短边 | 1739px | = 300dpi 理论值 1748px × (1−0.5% 量化容差)，低于此直接报错 |
 | 单枚尺寸 | 22~62mm | 手账贴纸合理区间 |
 | 元素最小净距 | 8mm | 模切安全 |
 | 刀线 | 图层 `CutContour`，#FF00FF，0.25pt | 只切不印 |
@@ -186,8 +204,10 @@ python3 memory-sticker-forge/tools/selftest_provider.py --all
 
 ## 已知限制
 
-- 输出是 **RGB 而非 CMYK**，首单必须打样确认色差
-- `SIMILAR_FAMILIES` 是硬编码同族词库，遇到新品类（乐高、手办、宠物用品）会漏判，需要补
+- 输出是 **RGB 而非 CMYK**（不嵌输出 ICC），请按 sRGB 解释、在 RIP 端转换，**首单必须打样确认色差**。我们没有做过实物色卡比对
+- 两个外部生图 provider（`openai` / `volcengine`）**代码完成但从未真实调用过**，见上方实测状态表
+- `SIMILAR_FAMILIES` / `COMPOSITE_REPLACE` 仍是硬编码词库，遇到新品类（乐高、盲盒、玩偶、手办）会漏判；兜底是「模型判断 + 通用中心词规则 + 不可收敛就换元素」，所以新品类表现为多花 1~2 轮，不会 4 轮全败
+- **IP 合规**：卡通吉祥物 / 玩偶手办盲盒 / 主题乐园元素 / 文创设计 / 商标字标一律不画；**现代地标建筑本体（体育场馆、摩天楼、观光塔）属受著作权保护的建筑作品，也不画**；古建筑本体（城墙、古塔、飞檐、石狮）与自然景观可画，优先画「那天你带着的东西」（门票、地图、水壶、背包、帽子、食物、落叶）
 - 照片可提取物品少于 6 个时，兜底会允许轻微同族重复（缺枚数比雷同更糟）
 - 单张 A5 内不做跨单去重，多单请用 `--exclude` 手动传
 

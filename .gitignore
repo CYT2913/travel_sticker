@@ -1,3 +1,40 @@
+# ── 用户隐私：任何可能是客户照片或交付物的文件都不进仓库 ──────────────────
+# 原则：图片/视频一律先【全部忽略】，再用 examples/ 白名单放行脱敏示例图。
+#
+# 两个已经踩过的洞（2026-09-01 复盘，都不是靠肉眼看 .gitignore 发现的，
+# 是用 git check-ignore 实测出来的，所以 tests/test_privacy_gitignore.py 会持续实测）：
+#   ① 原来只忽略 *.jpg / *.jpeg，漏了 *.png：有人把客户照片存成 PNG 放在
+#      run_*/ 之外，就会被正常跟踪并推到公开仓库。
+#   ② 大小写：手机导出的文件名是 IMG_1234.JPG / .HEIC（大写），Linux 上
+#      *.jpg 匹配不到它们。所以下面统一写成 [jJ][pP][gG] 这种字符组形式，
+#      覆盖全部大小写组合，而不是手工枚举 .JPG/.Jpg/.jpG。
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[pP][nN][gG]
+*.[hH][eE][iI][cC]
+*.[hH][eE][iI][fF]
+*.[wW][eE][bB][pP]
+*.[bB][mM][pP]
+*.[gG][iI][fF]
+*.[tT][iI][fF]
+*.[tT][iI][fF][fF]
+*.[dD][nN][gG]
+*.[rR][aA][wW]
+*.[mM][pP]4
+*.[mM][oO][vV]
+*.[aA][vV][iI]
+*.[hH][eE][vV][cC]
+
+# 例外：examples/ 下的脱敏示例图必须能进仓库（它们是产品成品图，不是用户照片）。
+# 反向规则必须写在上面那些忽略规则之后才生效。
+# 白名单按【文件名前缀】而不是扩展名放行：这样往 examples/ 里随手拖一张
+# 原始照片（IMG_xxxx.jpg）不会自动变成可提交状态，必须显式改名成示例文件，
+# 改名这个动作本身就是一次「我确认这张已脱敏」的人工确认。
+!examples/示例*
+!examples/example_*
+!examples/README*
+
+# ── 运行产物 / 交付物（含用户照片衍生内容）───────────────────────────────
 __pycache__/
 *.pyc
 run_*/
@@ -5,9 +42,12 @@ forge_out/
 a3_*/
 out*/
 probe_out*/
-pf_*/
+pf_*
 artifacts/
-*.jpeg
-*.jpg
 交付_*/
-!examples/*.png
+production/
+_work/
+preflight.json
+qc_report.md
+delivery_metrics.json
+*.log

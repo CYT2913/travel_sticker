@@ -37,13 +37,10 @@ sys.path.insert(0, os.path.dirname(HERE))
 A5_RATIO = 210.0 / 148.0
 RATIO_TOL = 0.03
 
-# 每个 provider 必需的环境变量
-REQUIRED_ENV = {
-    "volcengine": ["ARK_API_KEY"],
-    "openai": ["OPENAI_API_KEY"],
-    "cmd": ["FORGE_GEN_CMD", "FORGE_VISION_CMD"],
-    "gemini": ["GEMINI_API_KEY"],
-}
+# ⚠️ 这里【不再】自己维护一份 REQUIRED_ENV。
+# 以前这个文件和 providers.py 各存一份，两边曾经不一致（少了一个 provider 就漏检）。
+# 现在唯一事实来源是 providers.REQUIRED_ENV / providers.selftest()，本文件只负责
+# 「要花钱的那两步实测」，不花钱的部分一律委托给 providers.py --selftest。
 
 
 def c(s, color):
@@ -109,39 +106,14 @@ def check_config():
         bad("缺 Pillow → 执行：pip install Pillow")
         sys.exit(1)
 
-    step("3. 环境变量")
-    missing = []
-    for who, kind in ((gen, "生图"), (vis, "视觉")):
-        for k in REQUIRED_ENV.get(who, []):
-            if os.environ.get(k):
-                v = os.environ[k]
-                ok("%s(%s) %s = %s…%s（长度 %d）"
-                   % (kind, who, k, v[:6], v[-4:], len(v)))
-            else:
-                bad("%s(%s) 缺 %s" % (kind, who, k))
-                missing.append(k)
-    if missing:
-        print("\n     设置方法（当前终端生效）：")
-        for k in dict.fromkeys(missing):
-            print("       export %s='你的key'" % k)
-        sys.exit(1)
+    step("3. 链路自检（委托 providers.py --selftest，不花钱）")
+    offline = os.environ.get("FORGE_SELFTEST_OFFLINE", "").strip() not in ("", "0")
+    code = providers.print_selftest(offline=offline)
+    if code != 0:
+        sys.exit(code)
 
-    step("4. 关键参数")
-    if gen == "volcengine":
-        print("     ARK_IMAGE_MODEL = %s"
-              % os.environ.get("ARK_IMAGE_MODEL", "doubao-seedream-4-0-250828（默认）"))
-        print("     ARK_IMAGE_SIZE  = %s"
-              % os.environ.get("ARK_IMAGE_SIZE", "1760x2480（默认，A5 300dpi）"))
-        warn("火山模型迭代快，若报模型不存在，去控制台「开通管理」抄准确的模型 ID，"
-             "再 export ARK_IMAGE_MODEL=…")
-        warn("Seedream 有总像素上限，A5 400dpi(2336x3312) 大概率超限；"
-             "要 400dpi 请用 openai 的 gpt-image-2")
-    elif gen == "openai":
-        print("     OPENAI_IMAGE_MODEL = %s"
-              % os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2（默认）"))
-        print("     OPENAI_IMAGE_SIZE  = %s"
-              % os.environ.get("OPENAI_IMAGE_SIZE", "1760x2480（默认，A5 300dpi）"))
-        warn("订阅（Plus/Pro/Codex）额度不能抵扣 API 调用，需在 platform 单独充 credits")
+    step("4. 像素能力 vs 400/300dpi 需求与余量")
+    print(providers.capability_table())
     ok("干检查全部通过，还没有产生任何费用")
     return gen, vis
 
