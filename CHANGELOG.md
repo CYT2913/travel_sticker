@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-09-09 · `AGENTS.md` 与代码对齐（纯文档，未改任何代码）· v3.4.1-doc
+
+`AGENTS.md` 内容停留在 v3.2，而代码与 `CONTEXT.md` 已到 v3.4.1。它是接手 Agent 读的第一份文件，滞后会直接误导开发，故按**代码与 `CONTEXT.md` 为准**逐项核实修正。只改第 0、1 节；**第 2 节「提问纪律」为客户资产，字节级未改动**（已用脚本比对，1378 字节一致）。
+
+**修正的滞后点**
+
+- **0.5 运行测试**：旧文写「当前 11 项全绿」且只提 `test_select_objects.py` —— 实为 11 个测试**文件**。实跑 `python3 -m pytest tests/ -q` 核实基线为 **128 项收集 = 124 passed + 4 skipped**（跳过的 4 项在 `test_dpi_and_delivery.py`，因 `make_delivery_v35.py` 只在运行版）。补 11 个文件的项数与职责表，并新增「改动哪些函数后必须重跑」清单（选品同族 / IP 判定 / prompt 组装 / 收敛 / 形状归一 / 分辨率 provider / G0 续跑 / `.gitignore`）。
+- **0.9 关键规格**：生图最小短边 1748px → **1739px**，并说明这是 `px_at()` 公式推导（300dpi 理论值 1748 × (1−`SHORT_EDGE_TOL` 0.5%)）而非魔数：写死会在改纸张尺寸时静默降质、余量不可见；容差用于吸收厂商尺寸量化，把 gpt-image-2 `a5-300` 档余量从 12px 抬到 21px，但挡不住真低分辨率模型（`dpi_plan()` 负责）。点明 `test_provider_capability.py` 有守护测试，**不许为让测试过而把数字填回去**。
+- **新增 0.10 IP 合规策略**（原先整块缺失）：🔴 硬禁止主题乐园 / 景区吉祥物 / 文创设计 / 商标字标，🔴 硬禁止**现代地标建筑本体**（有在世建筑师署名，属受保护的建筑作品），🟢 允许自然景观与古建筑本体（公共领域），⭐ 最高优先「那天你带着的东西」。附代码落地表（`HARD_BAN_*` / `MODERN_LANDMARK_*` / `ANCIENT_ARCH_*` / `CARRY_*` 与对应判定函数）、`_rank_of()` **五档**排序（随身物 0 > 纪念物 1 > 普通 2 > 古建 3 > 文字依赖件 4，按源码 docstring 校正，非四档）、G0 + 选品 + 生图后复检**三层拦截**，以及场景图链路 `SCENE_LANDMARK_OVERRIDE` **必须拼在 prompt 最末尾**（v36 05 鸟巢的根因：`IP_POLICY` 排在 `SCENE_OUTPUT` 前被「保持原场景」压过）。
+- **0.8 改动前必读的约束**：补三条 —— ①**收敛保护不可绕过**（`ConvergenceGuard` + 兜底回填必须过同族检查，v36 银杏三枚树体部件）；②**provider 产物认领必须自证**（禁止扫目录取最新文件，并发串图实测 md5 相同；公开副本直写 `{out}`、生成前删同名旧文件、候选不唯一时抛错不猜）；③**模型返回形状不可信**（`_strlist()` / `_pairs_from()` 归一，「格式抖动只降级成漏判，不允许崩产线」）。
+- **0.7 不得触碰的目录**：同步 `.gitignore` 收紧结果 —— 补 `*.png` 漏洞、大小写敏感改字符组 `*.[jJ][pP][gG]`、图片视频全忽略 + `examples/` 按文件名前缀白名单、`test_privacy_gitignore.py` 实测 `git check-ignore`；产物目录补 `pf_*` / `production/` / `_work/`。
+
+**顺带核实并修正**
+
+- 0.2 依赖清单与 `requirements.txt` 一致；补注 `cairosvg` **不在** requirements 里、缺失只影响 PDF 环节。
+- 0.3 自检路径 `memory-sticker-forge/tools/selftest_provider.py` 正确，退出码 0/1/2/3 正确；「二选一」→「三选一」（openai / volcengine / cmd 共三种）。
+- 0.4 全部命令用 `--help` 验证脚本存在、参数名未变（**未跑生图**）；补**断点续跑**（`resume_state.json`，重跑同一条命令即续跑，`--fresh` 才从头）与默认值，补卡纸链路 `forge_scene.py` / `make_memory_card.py`。
+- 0.6 `py_compile` 基线补 `memory-sticker-forge/tools/*.py` 与 `tests/*.py`（`*.py` 通配符不递归，原命令漏检）。
+- 第 1 节上手顺序：第 4 步改为读 0.8 + 0.10，第 5 步改为跑全量 pytest 并给出预期数字。
+
+**变更文件**：`AGENTS.md`、`CHANGELOG.md`。代码零改动，`tests/` 仍 124 passed + 4 skipped。
+
+---
+
 ## 2026-09-01 · 缺陷 A/B/C 三修 + 06 银杏 v37 重跑交付 · v3.4.1
 
 修 v36 暴露的 3 个缺陷，并重跑 06 银杏 → `run_v37/p6/`、`交付_v37_20260901/06_银杏_v37厂家文件/`（`run_v36/` 未覆盖）。`tests/` 101 → **128 项全绿**（新增 `tests/test_g0_retry_and_resume.py` 27 项）。
